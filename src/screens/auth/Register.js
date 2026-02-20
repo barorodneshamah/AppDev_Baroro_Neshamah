@@ -22,20 +22,15 @@ const COLORS = {
   textLight: '#ffffff',
 };
 
-const Login = () => {
+const Register = () => {
   const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState(false);
 
   const navigation = useNavigation();
 
-  const handleLogin = () => {
-    if (username === '' || password === '') {
-      setError(true);
-      return;
-    }
-    setError(false);
-    console.log('Logging in...', username);
+  const handleRegister = () => {
+    console.log('Registering...', { username, email, password });
   };
 
   return (
@@ -44,31 +39,42 @@ const Login = () => {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <ScrollView contentContainerStyle={styles.scrollContainer} bounces={false}>
-        {/* TOP SECTION: Orange Branding Area */}
+        {/* TOP SECTION */}
         <View style={styles.topSection}>
-          <Text style={styles.welcomeText}>Welcome Back, User!</Text>
+          <Text style={styles.welcomeText}>Start New Journey!</Text>
 
           <View style={styles.logoCard}>
             <Image source={LogoImg} style={styles.logoImage} />
           </View>
         </View>
 
-        {/* BOTTOM SECTION: Form Area */}
+        {/* BOTTOM SECTION */}
         <View style={styles.bottomSection}>
-          <Text style={styles.formTitle}>Sign In</Text>
+          <Text style={styles.formTitle}>Register</Text>
 
           <View style={styles.inputContainer}>
             <TextInput
               style={styles.input}
-              placeholder="Username or Email"
+              placeholder="Username"
               placeholderTextColor="#888"
               value={username}
               onChangeText={setUsername}
+            />
+          </View>
+
+          <View style={styles.inputContainer}>
+            <TextInput
+              style={styles.input}
+              placeholder="Email"
+              placeholderTextColor="#888"
+              value={email}
+              onChangeText={setEmail}
+              keyboardType="email-address"
               autoCapitalize="none"
             />
           </View>
 
-          <View style={[styles.inputContainer, error && styles.inputError]}>
+          <View style={styles.inputContainer}>
             <TextInput
               style={styles.input}
               placeholder="Password"
@@ -79,18 +85,14 @@ const Login = () => {
             />
           </View>
 
-          {error && <Text style={styles.errorText}>Invalid Password</Text>}
-
-          <TouchableOpacity style={styles.button} onPress={handleLogin}>
-            <Text style={styles.buttonText}>Sign In</Text>
+          <TouchableOpacity style={styles.button} onPress={handleRegister}>
+            <Text style={styles.buttonText}>Register</Text>
           </TouchableOpacity>
 
           <View style={styles.footerRow}>
-            <Text style={styles.footerText}>Don't have an account? </Text>
-            <TouchableOpacity
-              onPress={() => navigation.navigate(ROUTES.REGISTER)}
-            >
-              <Text style={styles.footerLink}>Register</Text>
+            <Text style={styles.footerText}>Already have an account? </Text>
+            <TouchableOpacity onPress={() => navigation.navigate(ROUTES.LOGIN)}>
+              <Text style={styles.footerLink}>Sign in</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -136,22 +138,22 @@ const styles = StyleSheet.create({
     overflow: 'hidden',   
   },
   logoImage: {
-    width: 180,       
+    width: 180,            
     height: 130,
-    borderRadius: 25,      
+    borderRadius: 25,     
     resizeMode: 'cover',
   },
   bottomSection: {
     flex: 1,
     paddingHorizontal: 30,
-    paddingTop: 40,
+    paddingTop: 30,
     alignItems: 'center',
   },
   formTitle: {
     fontSize: 24,
     fontWeight: 'bold',
     color: COLORS.primary,
-    marginBottom: 30,
+    marginBottom: 20,
     fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
   },
   inputContainer: {
@@ -163,22 +165,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 15,
   },
-  inputError: {
-    borderWidth: 1,
-    borderColor: 'red',
-  },
   input: {
     fontSize: 16,
     color: COLORS.textDark,
     height: '100%',
-  },
-  errorText: {
-    color: 'red',
-    alignSelf: 'flex-start',
-    fontSize: 12,
-    marginTop: -10,
-    marginBottom: 10,
-    fontStyle: 'italic',
   },
   button: {
     backgroundColor: COLORS.primary,
@@ -211,4 +201,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export default Login;
+export default Register;

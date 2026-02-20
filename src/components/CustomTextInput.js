@@ -1,4 +1,4 @@
-import { Text, View } from 'react-native';
+import { Dimensions, Text, View } from 'react-native';
 import { TextInput } from 'react-native-gesture-handler';
 
 const CustomTextInput = ({
@@ -9,6 +9,8 @@ const CustomTextInput = ({
   containerStyle,
   textStyle,
 }) => {
+  const { width, height } = Dimensions.get('window');
+
   return (
     <View style={containerStyle}>
       <Text style={labelStyle}>{label}</Text>
@@ -18,7 +20,7 @@ const CustomTextInput = ({
         style={[
           textStyle,
           {
-            width: '80%',
+            width: width * 0.9,
             borderBottomWidth: 1,
           },
         ]}
