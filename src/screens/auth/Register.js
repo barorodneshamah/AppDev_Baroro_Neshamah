@@ -1,17 +1,13 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  Image,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
+  View, Text, TextInput, TouchableOpacity,
+  StyleSheet, Image, KeyboardAvoidingView,
+  Platform, ScrollView,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import { useDispatch, useSelector } from 'react-redux';
 import { ROUTES } from '../../utils/routes';
+import { userRegister, resetRegister } from '../../app/reducers/auth';
 import LogoImg from '../../../images/3.png';
 
 const COLORS = {
@@ -28,9 +24,21 @@ const Register = () => {
   const [password, setPassword] = useState('');
 
   const navigation = useNavigation();
+  const dispatch = useDispatch();
+  const { isLoading, isError, isSuccess } = useSelector(
+    state => state.auth.register,
+  );
+
+  useEffect(() => {
+    if (isSuccess) {
+      dispatch(resetRegister());
+      navigation.navigate(ROUTES.LOGIN);
+    }
+  }, [isSuccess]);
 
   const handleRegister = () => {
-    console.log('Registering...', { username, email, password });
+    if (username === '' || email === '' || password === '') return;
+    dispatch(userRegister({ username, email, password }));
   };
 
   return (
@@ -39,10 +47,10 @@ const Register = () => {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <ScrollView contentContainerStyle={styles.scrollContainer} bounces={false}>
+
         {/* TOP SECTION */}
         <View style={styles.topSection}>
           <Text style={styles.welcomeText}>Start New Journey!</Text>
-
           <View style={styles.logoCard}>
             <Image source={LogoImg} style={styles.logoImage} />
           </View>
@@ -74,7 +82,7 @@ const Register = () => {
             />
           </View>
 
-          <View style={styles.inputContainer}>
+          <View style={[styles.inputContainer, isError && styles.inputError]}>
             <TextInput
               style={styles.input}
               placeholder="Password"
@@ -85,8 +93,18 @@ const Register = () => {
             />
           </View>
 
-          <TouchableOpacity style={styles.button} onPress={handleRegister}>
-            <Text style={styles.buttonText}>Register</Text>
+          {isError && (
+            <Text style={styles.errorText}>Registration failed. Try again.</Text>
+          )}
+
+          <TouchableOpacity
+            style={styles.button}
+            onPress={handleRegister}
+            disabled={isLoading}
+          >
+            <Text style={styles.buttonText}>
+              {isLoading ? 'Registering...' : 'Register'}
+            </Text>
           </TouchableOpacity>
 
           <View style={styles.footerRow}>
@@ -96,6 +114,7 @@ const Register = () => {
             </TouchableOpacity>
           </View>
         </View>
+
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -128,19 +147,19 @@ const styles = StyleSheet.create({
   logoCard: {
     backgroundColor: COLORS.background,
     padding: 10,
-    borderRadius: 25,     
+    borderRadius: 25,
     alignItems: 'center',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.2,
     shadowRadius: 5,
     elevation: 5,
-    overflow: 'hidden',   
+    overflow: 'hidden',
   },
   logoImage: {
-    width: 180,            
+    width: 180,
     height: 130,
-    borderRadius: 25,     
+    borderRadius: 25,
     resizeMode: 'cover',
   },
   bottomSection: {
@@ -165,10 +184,22 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 15,
   },
+  inputError: {
+    borderWidth: 1,
+    borderColor: 'red',
+  },
   input: {
     fontSize: 16,
     color: COLORS.textDark,
     height: '100%',
+  },
+  errorText: {
+    color: 'red',
+    alignSelf: 'flex-start',
+    fontSize: 12,
+    marginTop: -10,
+    marginBottom: 10,
+    fontStyle: 'italic',
   },
   button: {
     backgroundColor: COLORS.primary,

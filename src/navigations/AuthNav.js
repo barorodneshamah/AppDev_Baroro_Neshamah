@@ -1,5 +1,6 @@
 import { createStackNavigator } from '@react-navigation/stack';
-import { ROUTES } from '../utils';
+// Make sure this points to your routes file properly:
+import { ROUTES } from '../utils/routes'; 
 
 import Login from '../screens/auth/Login';
 import Register from '../screens/auth/Register';

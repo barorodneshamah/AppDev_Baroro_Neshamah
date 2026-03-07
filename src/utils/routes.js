@@ -1,4 +1,5 @@
-export default {
+// routes.js
+export const ROUTES = {
   // Auth
   LOGIN: 'Login',
   REGISTER: 'Register',

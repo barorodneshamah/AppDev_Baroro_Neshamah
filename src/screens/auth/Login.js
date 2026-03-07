@@ -1,17 +1,13 @@
 import React, { useState } from 'react';
 import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  Image,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
+  View, Text, TextInput, TouchableOpacity,
+  StyleSheet, Image, KeyboardAvoidingView,
+  Platform, ScrollView,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import { useDispatch, useSelector } from 'react-redux';
 import { ROUTES } from '../../utils/routes';
+import { userLogin } from '../../app/reducers/auth';
 import LogoImg from '../../../images/3.png';
 
 const COLORS = {
@@ -25,17 +21,14 @@ const COLORS = {
 const Login = () => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState(false);
 
   const navigation = useNavigation();
+  const dispatch = useDispatch();
+  const { isLoading, isError } = useSelector(state => state.auth);
 
   const handleLogin = () => {
-    if (username === '' || password === '') {
-      setError(true);
-      return;
-    }
-    setError(false);
-    console.log('Logging in...', username);
+    if (username === '' || password === '') return;
+    dispatch(userLogin({ username, password }));
   };
 
   return (
@@ -44,10 +37,10 @@ const Login = () => {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <ScrollView contentContainerStyle={styles.scrollContainer} bounces={false}>
+
         {/* TOP SECTION: Orange Branding Area */}
         <View style={styles.topSection}>
           <Text style={styles.welcomeText}>Welcome Back, User!</Text>
-
           <View style={styles.logoCard}>
             <Image source={LogoImg} style={styles.logoImage} />
           </View>
@@ -60,7 +53,7 @@ const Login = () => {
           <View style={styles.inputContainer}>
             <TextInput
               style={styles.input}
-              placeholder="Username or Email"
+              placeholder="Username"
               placeholderTextColor="#888"
               value={username}
               onChangeText={setUsername}
@@ -68,7 +61,7 @@ const Login = () => {
             />
           </View>
 
-          <View style={[styles.inputContainer, error && styles.inputError]}>
+          <View style={[styles.inputContainer, isError && styles.inputError]}>
             <TextInput
               style={styles.input}
               placeholder="Password"
@@ -79,21 +72,28 @@ const Login = () => {
             />
           </View>
 
-          {error && <Text style={styles.errorText}>Invalid Password</Text>}
+          {isError && (
+            <Text style={styles.errorText}>Invalid username or password</Text>
+          )}
 
-          <TouchableOpacity style={styles.button} onPress={handleLogin}>
-            <Text style={styles.buttonText}>Sign In</Text>
+          <TouchableOpacity
+            style={styles.button}
+            onPress={handleLogin}
+            disabled={isLoading}
+          >
+            <Text style={styles.buttonText}>
+              {isLoading ? 'Signing in...' : 'Sign In'}
+            </Text>
           </TouchableOpacity>
 
           <View style={styles.footerRow}>
             <Text style={styles.footerText}>Don't have an account? </Text>
-            <TouchableOpacity
-              onPress={() => navigation.navigate(ROUTES.REGISTER)}
-            >
+            <TouchableOpacity onPress={() => navigation.navigate(ROUTES.REGISTER)}>
               <Text style={styles.footerLink}>Register</Text>
             </TouchableOpacity>
           </View>
         </View>
+
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -126,19 +126,19 @@ const styles = StyleSheet.create({
   logoCard: {
     backgroundColor: COLORS.background,
     padding: 10,
-    borderRadius: 25,     
+    borderRadius: 25,
     alignItems: 'center',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.2,
     shadowRadius: 5,
     elevation: 5,
-    overflow: 'hidden',   
+    overflow: 'hidden',
   },
   logoImage: {
-    width: 180,       
+    width: 180,
     height: 130,
-    borderRadius: 25,      
+    borderRadius: 25,
     resizeMode: 'cover',
   },
   bottomSection: {
