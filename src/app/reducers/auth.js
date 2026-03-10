@@ -17,6 +17,8 @@ const INITIAL_STATE = {
 };
 
 export default function reducer(state = INITIAL_STATE, action) {
+  console.log(action.type);
+  console.log(action.payload);
   switch (action.type) {
     case USER_LOGIN_REQUEST:
       return { ...state, data: null, isLoading: true, isError: false };
@@ -41,7 +43,20 @@ export default function reducer(state = INITIAL_STATE, action) {
   }
 }
 
-export const userLogin = payload => ({ type: USER_LOGIN, payload });
-export const resetLogin = () => ({ type: USER_LOGIN_RESET });
-export const userRegister = payload => ({ type: USER_REGISTER, payload });
-export const resetRegister = () => ({ type: USER_REGISTER_RESET });
+export const userLogin = payload => ({ 
+  type: USER_LOGIN, 
+  payload 
+});
+
+export const resetLogin = () => ({ 
+  type: USER_LOGIN_RESET 
+});
+
+export const userRegister = payload => ({
+   type: USER_REGISTER, 
+   payload 
+});
+
+export const resetRegister = () => ({ 
+  type: USER_REGISTER_RESET 
+});

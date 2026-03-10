@@ -1,4 +1,10 @@
-const BASE_URL = 'http://192.168.1.33:8000/api';
+import { Platform } from "react-native";
+
+const BASE_URL = Platform.select({
+  android: 'http://192.168.0.158:8000/api',
+  ios: 'http://127.0.0.1:8000/api',
+  default: 'http://127.0.0.1:8000/api',
+}) 
 
 const options = {
   headers: {
@@ -16,6 +22,7 @@ export async function authLogin({ username, password }) {
       password,
     }),
   });
+
   const data = await response.json();
   if (response.ok) {
     return data;

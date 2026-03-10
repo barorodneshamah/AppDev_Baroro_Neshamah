@@ -27,8 +27,17 @@ const Login = () => {
   const { isLoading, isError } = useSelector(state => state.auth);
 
   const handleLogin = () => {
-    if (username === '' || password === '') return;
-    dispatch(userLogin({ username, password }));
+    if (username === '' || password === ''){
+      
+      return;
+    }
+
+    dispatch(
+      userLogin({ 
+        username, 
+        password 
+      })
+    );
   };
 
   return (
@@ -72,14 +81,9 @@ const Login = () => {
             />
           </View>
 
-          {isError && (
-            <Text style={styles.errorText}>Invalid username or password</Text>
-          )}
-
           <TouchableOpacity
             style={styles.button}
             onPress={handleLogin}
-            disabled={isLoading}
           >
             <Text style={styles.buttonText}>
               {isLoading ? 'Signing in...' : 'Sign In'}

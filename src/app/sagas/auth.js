@@ -8,9 +8,13 @@ import {
 export function* userLoginAsync(action) {
   yield put({ type: USER_LOGIN_REQUEST });
   try {
+    console.log("Saga calling API with:", action.payload);
     const response = yield call(authLogin, action.payload);
+    console.log("API Response Success:", response);
     yield put({ type: USER_LOGIN_COMPLETED, payload: response });
   } catch (error) {
+    // This will tell us if it's a timeout, 404, or connection refused
+    console.error("SAGA LOGIN ERROR:", error); 
     yield put({ type: USER_LOGIN_ERROR, payload: error.message });
   }
 }
