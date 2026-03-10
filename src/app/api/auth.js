@@ -1,10 +1,6 @@
 import { Platform } from "react-native";
 
-const BASE_URL = Platform.select({
-  android: 'http://192.168.0.158:8000/api',
-  ios: 'http://127.0.0.1:8000/api',
-  default: 'http://127.0.0.1:8000/api',
-}) 
+const BASE_URL = 'http://localhost:8000/api'; 
 
 const options = {
   headers: {
@@ -14,37 +10,54 @@ const options = {
 };
 
 export async function authLogin({ username, password }) {
-  const response = await fetch(BASE_URL + '/login', {
-    method: 'POST',
-    ...options,
-    body: JSON.stringify({
-      username,
-      password,
-    }),
-  });
-
-  const data = await response.json();
-  if (response.ok) {
-    return data;
-  } else {
-    throw new Error(data.message || 'Login failed');
+  const url = BASE_URL + '/login';
+  console.log('authLogin attempting fetch to:', url, 'with payload:', { username, password });
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      ...options,
+      body: JSON.stringify({
+        username,
+        password,
+      }),
+    });
+    console.log('authLogin response status:', response.status);
+    const data = await response.json();
+    console.log('authLogin response data:', data);
+    if (response.ok) {
+      return data;
+    } else {
+      throw new Error(data.error || data.message || 'Login failed');
+    }
+  } catch (error) {
+    console.error('authLogin fetch error:', error);
+    throw error;
   }
 }
 
 export async function authRegister({ username, email, password }) {
-  const response = await fetch(BASE_URL + '/register', {
-    method: 'POST',
-    ...options,
-    body: JSON.stringify({
-      username,
-      email,
-      password,
-    }),
-  });
-  const data = await response.json();
-  if (response.ok) {
-    return data;
-  } else {
-    throw new Error(data.message || 'Registration failed');
+  const url = BASE_URL + '/signup';
+  console.log('authRegister attempting fetch to:', url, 'with payload:', { username, email, password });
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      ...options,
+      body: JSON.stringify({
+        username,
+        email,
+        password,
+      }),
+    });
+    console.log('authRegister response status:', response.status);
+    const data = await response.json();
+    console.log('authRegister response data:', data);
+    if (response.ok) {
+      return data;
+    } else {
+      throw new Error(data.error || data.message || 'Registration failed');
+    }
+  } catch (error) {
+    console.error('authRegister fetch error:', error);
+    throw error;
   }
 }

@@ -6,7 +6,7 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useDispatch, useSelector } from 'react-redux';
-import { ROUTES } from '../../utils/routes';
+import { ROUTES } from '../../utils';
 import { userRegister, resetRegister } from '../../app/reducers/auth';
 import LogoImg from '../../../images/3.png';
 

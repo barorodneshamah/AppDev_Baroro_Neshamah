@@ -26,9 +26,12 @@ export function* userLogin() {
 export function* userRegisterAsync(action) {
   yield put({ type: USER_REGISTER_REQUEST });
   try {
+    console.log("Saga calling register API with:", action.payload);
     const response = yield call(authRegister, action.payload);
+    console.log("API Register Response Success:", response);
     yield put({ type: USER_REGISTER_COMPLETED, payload: response });
   } catch (error) {
+    console.error("SAGA REGISTER ERROR:", error); 
     yield put({ type: USER_REGISTER_ERROR, payload: error.message });
   }
 }
