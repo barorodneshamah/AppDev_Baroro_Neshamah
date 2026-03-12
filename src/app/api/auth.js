@@ -36,7 +36,7 @@ export async function authLogin({ username, password }) {
 }
 
 export async function authRegister({ username, email, password }) {
-  const url = BASE_URL + '/signup';
+  const url = BASE_URL + '/register';
   console.log('authRegister attempting fetch to:', url, 'with payload:', { username, email, password });
   try {
     const response = await fetch(url, {
