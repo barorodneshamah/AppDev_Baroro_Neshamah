@@ -1,6 +1,21 @@
 import { Platform } from "react-native";
 
-const BASE_URL = 'http://192.168.43.76:8000/api'; 
+const BASE_URL = 'http://192.168.43.76:8000/api';
+
+interface LoginCredentials {
+  username: string;
+  password: string;
+}
+
+interface RegisterCredentials {
+  username: string;
+  email: string;
+  password: string;
+}
+
+interface ApiResponse {
+  [key: string]: any;
+}
 
 const options = {
   headers: {
@@ -9,8 +24,7 @@ const options = {
   },
 };
 
-
-export async function authLogin({ username, password }) {
+export async function authLogin({ username, password }: LoginCredentials): Promise<ApiResponse> {
   const url = BASE_URL + '/login';
   console.log('authLogin attempting fetch to:', url, 'with payload:', { username, password });
   try {
@@ -23,7 +37,7 @@ export async function authLogin({ username, password }) {
       }),
     });
     console.log('authLogin response status:', response.status);
-    const data = await response.json();
+    const data: ApiResponse = await response.json();
     console.log('authLogin response data:', data);
     if (response.ok) {
       return data;
@@ -36,7 +50,7 @@ export async function authLogin({ username, password }) {
   }
 }
 
-export async function authRegister({ username, email, password }) {
+export async function authRegister({ username, email, password }: RegisterCredentials): Promise<ApiResponse> {
   const url = BASE_URL + '/register';
   console.log('authRegister attempting fetch to:', url, 'with payload:', { username, email, password });
   try {
@@ -50,7 +64,7 @@ export async function authRegister({ username, email, password }) {
       }),
     });
     console.log('authRegister response status:', response.status);
-    const data = await response.json();
+    const data: ApiResponse = await response.json();
     console.log('authRegister response data:', data);
     if (response.ok) {
       return data;
