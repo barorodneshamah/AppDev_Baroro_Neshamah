@@ -5,7 +5,25 @@ import {
   USER_REGISTER_REQUEST, USER_REGISTER_RESET,
 } from '../actions';
 
-const INITIAL_STATE = {
+interface RegisterState {
+  isLoading: boolean;
+  isError: boolean;
+  isSuccess: boolean;
+}
+
+interface AuthState {
+  data: any | null;
+  isLoading: boolean;
+  isError: boolean;
+  register: RegisterState;
+}
+
+interface AuthAction {
+  type: string;
+  payload?: any;
+}
+
+const INITIAL_STATE: AuthState = {
   data: null,
   isLoading: false,
   isError: false,
@@ -16,7 +34,7 @@ const INITIAL_STATE = {
   },
 };
 
-export default function reducer(state = INITIAL_STATE, action) {
+export default function reducer(state = INITIAL_STATE, action: AuthAction): AuthState {
   console.log(action.type);
   console.log(action.payload);
   switch (action.type) {
@@ -43,20 +61,20 @@ export default function reducer(state = INITIAL_STATE, action) {
   }
 }
 
-export const userLogin = payload => ({ 
-  type: USER_LOGIN, 
-  payload
+export const userLogin = (payload: any) => ({
+  type: USER_LOGIN,
+  payload,
 });
 
-export const resetLogin = () => ({ 
-  type: USER_LOGIN_RESET 
+export const userRegister = (payload: any) => ({
+  type: USER_REGISTER,
+  payload,
 });
 
-export const userRegister = payload => ({
-   type: USER_REGISTER, 
-   payload 
+export const resetLogin = () => ({
+  type: USER_LOGIN_RESET,
 });
 
-export const resetRegister = () => ({ 
-  type: USER_REGISTER_RESET 
+export const resetRegister = () => ({
+  type: USER_REGISTER_RESET,
 });
