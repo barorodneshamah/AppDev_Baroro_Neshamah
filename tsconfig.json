@@ -10,7 +10,7 @@
     "**/*.tsx",
     "App.js",
     "nativewind-env.d.ts"
-  ],
+, "src/screens/auth/Login.js"  ],
   "exclude": [
     "**/node_modules",
     "**/Pods"
