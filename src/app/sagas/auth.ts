@@ -1,4 +1,4 @@
-import { call, put, takeEvery, SagaIterator } from 'redux-saga/effects';
+import { call, put, takeEvery } from 'redux-saga/effects';
 import { authLogin, authRegister } from '../api/auth';
 import {
   USER_LOGIN, USER_LOGIN_COMPLETED, USER_LOGIN_ERROR, USER_LOGIN_REQUEST,
@@ -22,7 +22,7 @@ interface RegisterAction {
   };
 }
 
-export function* userLoginAsync(action: LoginAction): SagaIterator {
+export function* userLoginAsync(action: LoginAction) {
   yield put({ type: USER_LOGIN_REQUEST });
   try {
     console.log("Saga calling API with:", action.payload);
@@ -35,11 +35,11 @@ export function* userLoginAsync(action: LoginAction): SagaIterator {
   }
 }
 
-export function* userLogin(): SagaIterator {
+export function* userLogin() {
   yield takeEvery(USER_LOGIN, userLoginAsync);
 }
 
-export function* userRegisterAsync(action: RegisterAction): SagaIterator {
+export function* userRegisterAsync(action: RegisterAction) {
   yield put({ type: USER_REGISTER_REQUEST });
   try {
     console.log("Saga calling register API with:", action.payload);
@@ -52,6 +52,6 @@ export function* userRegisterAsync(action: RegisterAction): SagaIterator {
   }
 }
 
-export function* userRegister(): SagaIterator {
+export function* userRegister() {
   yield takeEvery(USER_REGISTER, userRegisterAsync);
 }
