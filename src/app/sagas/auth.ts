@@ -22,7 +22,7 @@ interface RegisterAction {
   };
 }
 
-export function* userLoginAsync(action: LoginAction) {
+export function* userLoginAsync(action: LoginAction): Generator<any, void, any> {
   yield put({ type: USER_LOGIN_REQUEST });
   try {
     console.log("Saga calling API with:", action.payload);
@@ -35,11 +35,11 @@ export function* userLoginAsync(action: LoginAction) {
   }
 }
 
-export function* userLogin() {
+export function* userLogin(): Generator<any, void, any> {
   yield takeEvery(USER_LOGIN, userLoginAsync);
 }
 
-export function* userRegisterAsync(action: RegisterAction) {
+export function* userRegisterAsync(action: RegisterAction): Generator<any, void, any> {
   yield put({ type: USER_REGISTER_REQUEST });
   try {
     console.log("Saga calling register API with:", action.payload);
@@ -52,6 +52,7 @@ export function* userRegisterAsync(action: RegisterAction) {
   }
 }
 
-export function* userRegister() {
+export function* userRegister(): Generator<any, void, any> {
   yield takeEvery(USER_REGISTER, userRegisterAsync);
 }
+

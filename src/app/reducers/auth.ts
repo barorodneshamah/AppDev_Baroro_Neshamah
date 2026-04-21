@@ -21,6 +21,7 @@ interface AuthState {
 interface AuthAction {
   type: string;
   payload?: any;
+  [key: string]: any;
 }
 
 const INITIAL_STATE: AuthState = {
@@ -78,3 +79,4 @@ export const resetLogin = () => ({
 export const resetRegister = () => ({
   type: USER_REGISTER_RESET,
 });
+
