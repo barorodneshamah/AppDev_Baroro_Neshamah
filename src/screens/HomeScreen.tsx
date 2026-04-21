@@ -1,5 +1,5 @@
-import { useNavigation } from '@react-navigation/native';
-import React, { useState } from 'react';
+import { useNavigation, NavigationProp } from '@react-navigation/native';
+import React, { useState, FC } from 'react';
 import {
   Image,
   ImageBackground,
@@ -20,6 +20,21 @@ import CustomListItem from '../components/CustomListItem';
 
 const { width } = Dimensions.get('window');
 
+interface Category {
+  id: string;
+  name: string;
+  icon: string;
+}
+
+interface FeaturedItem {
+  id: number;
+  title: string;
+  subtitle: string;
+  image: string;
+  price: string;
+  rating: number;
+}
+
 const COLORS = {
   primary: '#E07A5F',
   primaryDark: '#C25A40',
@@ -33,7 +48,7 @@ const COLORS = {
   border: '#E8E8E8',
 };
 
-const CATEGORIES = [
+const CATEGORIES: Category[] = [
   { id: 'hotel', name: 'Hotels', icon: 'bed' },
   { id: 'resort', name: 'Resorts', icon: 'umbrella-beach' },
   { id: 'villa', name: 'Villas', icon: 'home' },
@@ -41,7 +56,7 @@ const CATEGORIES = [
   { id: 'travel', name: 'Travel', icon: 'plane' },
 ];
 
-const FEATURED_ITEMS = [
+const FEATURED_ITEMS: FeaturedItem[] = [
   {
     id: 1,
     title: 'Boutique Hotel',
@@ -68,21 +83,28 @@ const FEATURED_ITEMS = [
   },
 ];
 
-// Placeholder Icon component - replace with actual icon library
-const Icon = ({ name, size = 20, color = COLORS.secondary }) => (
-  <View style={{ 
-    width: size, 
-    height: size, 
-    backgroundColor: color, 
-    borderRadius: size/2, 
-    opacity: 0.3 
-  }} />
+interface IconProps {
+  name: string;
+  size?: number;
+  color?: string;
+}
+
+const Icon: FC<IconProps> = ({ name, size = 20, color = COLORS.secondary }) => (
+  <View
+    style={{
+      width: size,
+      height: size,
+      backgroundColor: color,
+      borderRadius: size / 2,
+      opacity: 0.3,
+    }}
+  />
 );
 
-const HomeScreen = () => {
-  const navigation = useNavigation();
+const HomeScreen: FC = () => {
+  const navigation = useNavigation<NavigationProp<any>>();
   const dispatch = useDispatch();
-  const { data } = useSelector(state => state.auth);
+  const { data } = useSelector((state: any) => state.auth);
   const [selectedCategory, setSelectedCategory] = useState('hotel');
   const [location, setLocation] = useState('');
 
@@ -91,7 +113,7 @@ const HomeScreen = () => {
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor={COLORS.primary} />
-      
+
       {/* Header Section */}
       <View style={styles.header}>
         <View style={styles.headerTop}>
@@ -99,12 +121,16 @@ const HomeScreen = () => {
             <Text style={styles.greeting}>Good Morning,</Text>
             <Text style={styles.username}>{data?.username || 'Guest'}</Text>
           </View>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.profileButton}
             onPress={() => navigation.navigate(ROUTES.PROFILE)}
           >
-            <Image 
-              source={{ uri: `https://ui-avatars.com/api/?name=${data?.username || 'Guest'}&background=E07A5F&color=fff` }}
+            <Image
+              source={{
+                uri: `https://ui-avatars.com/api/?name=${
+                  data?.username || 'Guest'
+                }&background=E07A5F&color=fff`,
+              }}
               style={styles.avatar}
             />
           </TouchableOpacity>
@@ -122,7 +148,7 @@ const HomeScreen = () => {
               onChangeText={setLocation}
             />
           </View>
-          
+
           <View style={styles.dateRow}>
             <TouchableOpacity style={styles.dateButton}>
               <Icon name="calendar" size={16} color={COLORS.secondary} />
@@ -141,7 +167,7 @@ const HomeScreen = () => {
         </View>
       </View>
 
-      <ScrollView 
+      <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
@@ -154,30 +180,36 @@ const HomeScreen = () => {
               <Text style={styles.seeAll}>See All</Text>
             </TouchableOpacity>
           </View>
-          
-          <ScrollView 
-            horizontal 
+
+          <ScrollView
+            horizontal
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.categoriesContainer}
           >
             {CATEGORIES.map((cat) => (
-              <TouchableOpacity 
+              <TouchableOpacity
                 key={cat.id}
                 style={[
                   styles.categoryChip,
-                  selectedCategory === cat.id && styles.categoryChipActive
+                  selectedCategory === cat.id && styles.categoryChipActive,
                 ]}
                 onPress={() => setSelectedCategory(cat.id)}
               >
-                <Icon 
-                  name={cat.icon} 
-                  size={20} 
-                  color={selectedCategory === cat.id ? COLORS.textLight : COLORS.secondary} 
+                <Icon
+                  name={cat.icon}
+                  size={20}
+                  color={
+                    selectedCategory === cat.id
+                      ? COLORS.textLight
+                      : COLORS.secondary
+                  }
                 />
-                <Text style={[
-                  styles.categoryText,
-                  selectedCategory === cat.id && styles.categoryTextActive
-                ]}>
+                <Text
+                  style={[
+                    styles.categoryText,
+                    selectedCategory === cat.id && styles.categoryTextActive,
+                  ]}
+                >
                   {cat.name}
                 </Text>
               </TouchableOpacity>
@@ -207,12 +239,16 @@ const HomeScreen = () => {
                   </View>
                 </View>
               </ImageBackground>
-              
+
               <View style={styles.cardContent}>
                 <View style={styles.cardInfo}>
                   <Text style={styles.cardTitle}>{item.title}</Text>
                   <View style={styles.locationRow}>
-                    <Icon name="map-marker" size={14} color={COLORS.primary} />
+                    <Icon
+                      name="map-marker"
+                      size={14}
+                      color={COLORS.primary}
+                    />
                     <Text style={styles.cardSubtitle}>{item.subtitle}</Text>
                   </View>
                 </View>
@@ -237,14 +273,14 @@ const HomeScreen = () => {
               </View>
               <Text style={styles.actionText}>Favorites</Text>
             </TouchableOpacity>
-            
+
             <TouchableOpacity style={styles.actionCard}>
               <View style={[styles.actionIcon, { backgroundColor: '#E0F2F1' }]}>
                 <Icon name="ticket" color={COLORS.accent} size={24} />
               </View>
               <Text style={styles.actionText}>My Bookings</Text>
             </TouchableOpacity>
-            
+
             <TouchableOpacity style={styles.actionCard}>
               <View style={[styles.actionIcon, { backgroundColor: '#E3F2FD' }]}>
                 <Icon name="support" color="#2196F3" size={24} />
@@ -254,10 +290,9 @@ const HomeScreen = () => {
           </View>
         </View>
 
-      
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Your Dashboard</Text>
-          
+
           <CustomListItem
             title="Manage Bookings"
             description="View and modify your reservations"
@@ -266,7 +301,7 @@ const HomeScreen = () => {
             accentColor={COLORS.primary}
             onPress={() => console.log('Manage Bookings')}
           />
-          
+
           <CustomListItem
             title="Saved Preferences"
             description="Update your travel preferences"
@@ -275,7 +310,7 @@ const HomeScreen = () => {
             accentColor={COLORS.accent}
             onPress={() => console.log('Saved Preferences')}
           />
-          
+
           <CustomListItem
             title="Loyalty Points"
             description="Earn rewards on every booking"
@@ -284,7 +319,7 @@ const HomeScreen = () => {
             accentColor="#FF9800"
             onPress={() => console.log('Loyalty Points')}
           />
-          
+
           <CustomListItem
             title="Travel Insurance"
             description="Protect your trip with insurance"

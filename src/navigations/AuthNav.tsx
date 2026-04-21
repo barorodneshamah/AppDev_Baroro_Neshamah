@@ -1,13 +1,14 @@
-import { createStackNavigator } from '@react-navigation/stack';
+import { createStackNavigator, StackNavigationProp } from '@react-navigation/stack';
 import { ROUTES } from '../utils';
-
 import Login from '../screens/auth/Login';
 import Register from '../screens/auth/Register';
-
+import React, { FC } from 'react';
 
 const Stack = createStackNavigator();
 
-const AuthNavigation = () => {
+type AuthNavigationProp = StackNavigationProp<any>;
+
+const AuthNavigation: FC = () => {
   return (
     <Stack.Navigator
       initialRouteName={ROUTES.LOGIN}

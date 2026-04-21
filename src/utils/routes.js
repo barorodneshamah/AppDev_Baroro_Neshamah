@@ -1,4 +1,3 @@
-// routes.js
 export default {
   // Auth
   LOGIN: 'Login',

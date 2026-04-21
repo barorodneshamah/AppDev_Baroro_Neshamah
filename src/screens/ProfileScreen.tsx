@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { FC } from 'react';
 import {
   Image,
   Platform,
@@ -8,18 +8,18 @@ import {
   TouchableOpacity,
   View,
   StatusBar,
+  ViewStyle,
+  TextStyle,
 } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
-// import { IMG } from '../utils'; // Assuming IMG.LOGO is not for user avatar
 import { resetLogin } from '../app/reducers/auth';
 
-// --- Re-using the enhanced COLORS from HomeScreen for consistency ---
 const COLORS = {
-  primary: '#E07A5F',      // Warm terracotta
+  primary: '#E07A5F',
   primaryDark: '#C25A40',
-  secondary: '#3D405B',    // Deep slate for text
-  accent: '#81B29A',       // Sage green accent
-  background: '#F4F1DE',   // Warm cream background
+  secondary: '#3D405B',
+  accent: '#81B29A',
+  background: '#F4F1DE',
   surface: '#FFFFFF',
   textDark: '#2D3142',
   textLight: '#FFFFFF',
@@ -27,75 +27,109 @@ const COLORS = {
   border: '#E8E8E8',
 };
 
-// Mock Icon component (replace with actual Icon from react-native-vector-icons)
-// Install: npm install react-native-vector-icons or npx expo install @expo/vector-icons
-const Icon = ({ name, size = 20, color = COLORS.secondary, style = {} }) => (
-  <View style={[{ width: size, height: size, backgroundColor: color, borderRadius: size/2, opacity: 0.3 }, style]} />
-);
-// If using actual icons, you'd do:
-// import Icon from 'react-native-vector-icons/FontAwesome5'; // or other icon set
+interface IconProps {
+  name: string;
+  size?: number;
+  color?: string;
+  style?: ViewStyle;
+}
 
-// --- Helper Component for Profile Details Rows ---
-const ProfileItem = ({ icon, label, value, onPress, isLast = false }) => (
+const Icon: FC<IconProps> = ({ name, size = 20, color = COLORS.secondary, style = {} }) => (
+  <View
+    style={[
+      {
+        width: size,
+        height: size,
+        backgroundColor: color,
+        borderRadius: size / 2,
+        opacity: 0.3,
+      },
+      style,
+    ]}
+  />
+);
+
+interface ProfileItemProps {
+  icon: string;
+  label: string;
+  value?: string;
+  onPress?: () => void;
+  isLast?: boolean;
+}
+
+const ProfileItem: FC<ProfileItemProps> = ({
+  icon,
+  label,
+  value,
+  onPress,
+  isLast = false,
+}) => (
   <TouchableOpacity
     style={styles.profileItem}
     onPress={onPress}
-    disabled={!onPress} // Disable if no onPress handler is provided
+    disabled={!onPress}
   >
     <View style={styles.profileItemLeft}>
-      {/* Replace with actual Icon component */}
-      <Icon name={icon} size={20} color={COLORS.primary} style={styles.profileItemIcon} />
+      <Icon
+        name={icon}
+        size={20}
+        color={COLORS.primary}
+        style={styles.profileItemIcon}
+      />
       <Text style={styles.profileItemLabel}>{label}</Text>
     </View>
     <View style={styles.profileItemRight}>
       <Text style={styles.profileItemValue}>{value || 'Not provided'}</Text>
-      {onPress && <Icon name="chevron-right" size={18} color={COLORS.textMuted} style={styles.arrowIcon} />}
+      {onPress && (
+        <Icon
+          name="chevron-right"
+          size={18}
+          color={COLORS.textMuted}
+          style={styles.arrowIcon}
+        />
+      )}
     </View>
     {!isLast && <View style={styles.profileItemDivider} />}
   </TouchableOpacity>
 );
 
-const ProfileScreen = () => {
+const ProfileScreen: FC = () => {
   const dispatch = useDispatch();
-  const { data } = useSelector(state => state.auth);
+  const { data } = useSelector((state: any) => state.auth);
 
   const handleLogout = () => {
-    // In a real app, you might also clear navigation stack or go to login screen
     dispatch(resetLogin());
   };
 
-  // Dummy functions for editing (you'd replace these with actual navigation/modal logic)
   const handleEditUsername = () => console.log('Edit Username');
   const handleEditEmail = () => console.log('Edit Email');
   const handleChangePassword = () => console.log('Change Password');
   const handlePrivacySettings = () => console.log('Privacy Settings');
-  const handleAboutApp = () => console.log('About App');
 
-  // Generate avatar URL with user initials
   const avatarUrl = data?.username
     ? `https://ui-avatars.com/api/?name=${data.username}&background=E07A5F&color=fff&size=128`
     : `https://ui-avatars.com/api/?name=Guest&background=E07A5F&color=fff&size=128`;
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor={COLORS.primary} />
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-
+      <StatusBar
+        barStyle="light-content"
+        backgroundColor={COLORS.primary}
+      />
+      <ScrollView
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+      >
         {/* Top Section with Profile Picture and Name */}
         <View style={styles.topSection}>
           <View style={styles.avatarContainer}>
-            <Image
-              source={{ uri: avatarUrl }}
-              style={styles.avatar}
-            />
-            {/* Edit Avatar button (optional) */}
+            <Image source={{ uri: avatarUrl }} style={styles.avatar} />
             <TouchableOpacity style={styles.editAvatarButton}>
               <Icon name="camera" size={16} color={COLORS.textLight} />
             </TouchableOpacity>
           </View>
           <Text style={styles.name}>{data?.username || 'Guest'}</Text>
           <Text style={styles.email}>{data?.email || 'No email provided'}</Text>
-          {/* Main "Edit Profile" button for overall profile editing */}
           <TouchableOpacity style={styles.editProfileButton}>
             <Icon name="user-edit" size={16} color={COLORS.textLight} />
             <Text style={styles.editProfileButtonText}>Edit Profile</Text>
@@ -106,21 +140,21 @@ const ProfileScreen = () => {
         <View style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Account Details</Text>
           <ProfileItem
-            icon="user" // Example icon for username
+            icon="user"
             label="Username"
             value={data?.username}
             onPress={handleEditUsername}
           />
           <ProfileItem
-            icon="envelope" // Example icon for email
+            icon="envelope"
             label="Email"
             value={data?.email}
             onPress={handleEditEmail}
           />
           <ProfileItem
-            icon="briefcase" // Example icon for role
+            icon="briefcase"
             label="Role"
-            value={data?.roles?.join(', ') || 'User'} // Join roles if multiple
+            value={data?.roles?.join(', ') || 'User'}
             isLast={true}
           />
         </View>
@@ -146,7 +180,6 @@ const ProfileScreen = () => {
           <Icon name="sign-out-alt" color={COLORS.primary} size={20} />
           <Text style={styles.logoutText}>Log Out</Text>
         </TouchableOpacity>
-
       </ScrollView>
     </View>
   );
@@ -165,15 +198,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingTop: Platform.OS === 'ios' ? 60 : 40,
     paddingBottom: 30,
-    borderBottomLeftRadius: 40, // Slightly less aggressive curve
-    borderBottomRightRadius: 40, // Added for symmetry
+    borderBottomLeftRadius: 40,
+    borderBottomRightRadius: 40,
   },
   avatarContainer: {
     position: 'relative',
     marginBottom: 15,
-    backgroundColor: COLORS.surface, // Background for avatar placeholder
+    backgroundColor: COLORS.surface,
     borderRadius: 60,
-    padding: 3, // Border effect
+    padding: 3,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.15,
@@ -186,13 +219,13 @@ const styles = StyleSheet.create({
     borderRadius: 50,
     resizeMode: 'cover',
     borderWidth: 2,
-    borderColor: COLORS.surface, // Inner border
+    borderColor: COLORS.surface,
   },
   editAvatarButton: {
     position: 'absolute',
     bottom: 5,
     right: 5,
-    backgroundColor: COLORS.accent, // A nice contrast
+    backgroundColor: COLORS.accent,
     borderRadius: 20,
     padding: 8,
     borderWidth: 2,
@@ -203,7 +236,7 @@ const styles = StyleSheet.create({
     fontSize: 26,
     fontWeight: 'bold',
     letterSpacing: 0.5,
-    fontFamily: Platform.OS === 'ios' ? 'Avenir-Heavy' : 'sans-serif-condensed', // More modern font
+    fontFamily: Platform.OS === 'ios' ? 'Avenir-Heavy' : 'sans-serif-condensed',
     marginTop: 5,
   },
   email: {
@@ -284,7 +317,7 @@ const styles = StyleSheet.create({
     fontFamily: Platform.OS === 'ios' ? 'Avenir' : 'sans-serif',
   },
   arrowIcon: {
-    opacity: 0.6, // Soften the arrow icon
+    opacity: 0.6,
   },
   profileItemDivider: {
     height: 1,
@@ -293,13 +326,13 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    marginHorizontal: -20, // Extends divider to edges of the card
+    marginHorizontal: -20,
   },
   logoutButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'transparent', // Outlined button
+    backgroundColor: 'transparent',
     borderWidth: 1.5,
     borderColor: COLORS.primary,
     marginHorizontal: 15,
