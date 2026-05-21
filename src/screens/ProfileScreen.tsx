@@ -1,352 +1,418 @@
-import React, { FC } from 'react';
+// src/screens/ProfileScreen.tsx
+import React, { FC, useState }  from 'react';
 import {
-  Image,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-  StatusBar,
-  ViewStyle,
-  TextStyle,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity,
+  Platform, StatusBar, Modal, TextInput, ActivityIndicator,
+  Alert, Image,
 } from 'react-native';
-import { useDispatch, useSelector } from 'react-redux';
-import { resetLogin } from '../app/reducers/auth';
+import { useDispatch, useSelector }  from 'react-redux';
+import { userLogout }                from '../app/reducers/auth';
+import { apiFetch }                  from '../app/api/api';
+import { RootState }                 from '../store';
+import { COLORS, FONTS, RADIUS, SHADOW, SPACING, getRoleLabel, getRoleColor } from '../theme';
 
-const COLORS = {
-  primary: '#E07A5F',
-  primaryDark: '#C25A40',
-  secondary: '#3D405B',
-  accent: '#81B29A',
-  background: '#F4F1DE',
-  surface: '#FFFFFF',
-  textDark: '#2D3142',
-  textLight: '#FFFFFF',
-  textMuted: '#9A9A9A',
-  border: '#E8E8E8',
-};
+// ─── Types ────────────────────────────────────────────────────────────────────
 
-interface IconProps {
-  name: string;
-  size?: number;
-  color?: string;
-  style?: ViewStyle;
+interface ModalField {
+  label:         string;
+  key:           string;
+  secure?:       boolean;
+  keyboardType?: any;
 }
 
-const Icon: FC<IconProps> = ({ name, size = 20, color = COLORS.secondary, style = {} }) => (
-  <View
-    style={[
-      {
-        width: size,
-        height: size,
-        backgroundColor: color,
-        borderRadius: size / 2,
-        opacity: 0.3,
-      },
-      style,
-    ]}
-  />
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+const SectionCard: FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
+  <View style={styles.card}>
+    <Text style={styles.cardTitle}>{title}</Text>
+    {children}
+  </View>
 );
 
-interface ProfileItemProps {
-  icon: string;
-  label: string;
-  value?: string;
-  onPress?: () => void;
-  isLast?: boolean;
-}
+const InfoRow: FC<{ label: string; value?: string; last?: boolean }> = ({ label, value, last }) => (
+  <View style={[styles.infoRow, !last && styles.infoRowBorder]}>
+    <Text style={styles.infoLabel}>{label}</Text>
+    <Text style={styles.infoValue} numberOfLines={1}>{value || '—'}</Text>
+  </View>
+);
 
-const ProfileItem: FC<ProfileItemProps> = ({
-  icon,
-  label,
-  value,
-  onPress,
-  isLast = false,
+const ActionRow: FC<{ label: string; onPress: () => void; last?: boolean; danger?: boolean }> = ({
+  label, onPress, last, danger,
 }) => (
   <TouchableOpacity
-    style={styles.profileItem}
+    style={[styles.infoRow, !last && styles.infoRowBorder]}
     onPress={onPress}
-    disabled={!onPress}
+    activeOpacity={0.7}
   >
-    <View style={styles.profileItemLeft}>
-      <Icon
-        name={icon}
-        size={20}
-        color={COLORS.primary}
-        style={styles.profileItemIcon}
-      />
-      <Text style={styles.profileItemLabel}>{label}</Text>
-    </View>
-    <View style={styles.profileItemRight}>
-      <Text style={styles.profileItemValue}>{value || 'Not provided'}</Text>
-      {onPress && (
-        <Icon
-          name="chevron-right"
-          size={18}
-          color={COLORS.textMuted}
-          style={styles.arrowIcon}
-        />
-      )}
-    </View>
-    {!isLast && <View style={styles.profileItemDivider} />}
+    <Text style={[styles.infoLabel, danger && { color: COLORS.error }]}>{label}</Text>
+    <Text style={styles.chevron}>›</Text>
   </TouchableOpacity>
 );
 
-const ProfileScreen: FC = () => {
-  const dispatch = useDispatch();
-  const { data } = useSelector((state: any) => state.auth);
+// ─── Edit Modal ───────────────────────────────────────────────────────────────
 
-  const handleLogout = () => {
-    dispatch(resetLogin());
+interface EditModalProps {
+  visible:  boolean;
+  title:    string;
+  fields:   ModalField[];
+  values:   Record<string, string>;
+  onChange: (key: string, val: string) => void;
+  onCancel: () => void;
+  onSave:   () => void;
+  loading:  boolean;
+}
+
+const EditModal: FC<EditModalProps> = ({
+  visible, title, fields, values, onChange, onCancel, onSave, loading,
+}) => (
+  <Modal visible={visible} transparent animationType="slide">
+    <View style={styles.modalOverlay}>
+      <View style={styles.modalSheet}>
+        <View style={styles.modalHandle} />
+        <Text style={styles.modalTitle}>{title}</Text>
+
+        {fields.map(f => (
+          <View key={f.key} style={styles.modalField}>
+            <Text style={styles.modalLabel}>{f.label}</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={values[f.key] || ''}
+              onChangeText={v => onChange(f.key, v)}
+              secureTextEntry={f.secure}
+              keyboardType={f.keyboardType || 'default'}
+              autoCapitalize="none"
+              placeholderTextColor={COLORS.textMuted}
+              placeholder={`Enter ${f.label.toLowerCase()}`}
+            />
+          </View>
+        ))}
+
+        <View style={styles.modalActions}>
+          <TouchableOpacity style={styles.modalBtnCancel} onPress={onCancel}>
+            <Text style={styles.modalBtnCancelText}>Cancel</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.modalBtnSave} onPress={onSave} disabled={loading}>
+            {loading
+              ? <ActivityIndicator color={COLORS.textLight} size="small" />
+              : <Text style={styles.modalBtnSaveText}>Save</Text>
+            }
+          </TouchableOpacity>
+        </View>
+      </View>
+    </View>
+  </Modal>
+);
+
+// ─── Main Screen ──────────────────────────────────────────────────────────────
+
+const ProfileScreen: FC = () => {
+  const dispatch             = useDispatch();
+  const { data, token }      = useSelector((state: RootState) => state.auth);
+
+  const [editModal,     setEditModal]     = useState(false);
+  const [passwordModal, setPasswordModal] = useState(false);
+  const [saving,        setSaving]        = useState(false);
+
+  const [profileForm, setProfileForm] = useState({
+    fullName: data?.fullName || '',
+    username: data?.username || '',
+    email:    data?.email    || '',
+  });
+
+  const [passwordForm, setPasswordForm] = useState({
+    currentPassword: '',
+    newPassword:     '',
+    confirmPassword: '',
+  });
+
+  // ── Helpers ──────────────────────────────────────────────────────────────────
+
+  const userId    = data?.id;
+  const avatarUri = `https://ui-avatars.com/api/?name=${
+    encodeURIComponent(data?.fullName || data?.username || 'User')
+  }&background=c24a16&color=fff&size=128&bold=true`;
+  const primaryRole = data?.roles?.find((r: string) => r !== 'ROLE_USER') || 'ROLE_GUEST';
+
+  // ── Actions ──────────────────────────────────────────────────────────────────
+
+  const openEditModal = () => {
+    setProfileForm({
+      fullName: data?.fullName || '',
+      username: data?.username || '',
+      email:    data?.email    || '',
+    });
+    setEditModal(true);
   };
 
-  const handleEditUsername = () => console.log('Edit Username');
-  const handleEditEmail = () => console.log('Edit Email');
-  const handleChangePassword = () => console.log('Change Password');
-  const handlePrivacySettings = () => console.log('Privacy Settings');
+  const handleSaveProfile = async () => {
+    if (!profileForm.username || !profileForm.email) {
+      Alert.alert('Validation', 'Username and email are required.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await apiFetch(`/api/users/${userId}`, token, {
+        method: 'PUT',
+        body:   JSON.stringify(profileForm),
+      });
+      Alert.alert('Success', 'Profile updated successfully.');
+      setEditModal(false);
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Could not update profile.');
+    } finally {
+      setSaving(false);
+    }
+  };
 
-  const avatarUrl = data?.username
-    ? `https://ui-avatars.com/api/?name=${data.username}&background=E07A5F&color=fff&size=128`
-    : `https://ui-avatars.com/api/?name=Guest&background=E07A5F&color=fff&size=128`;
+  const handleChangePassword = async () => {
+    if (!passwordForm.currentPassword || !passwordForm.newPassword) {
+      Alert.alert('Validation', 'Please fill in all password fields.');
+      return;
+    }
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      Alert.alert('Validation', 'New passwords do not match.');
+      return;
+    }
+    if (passwordForm.newPassword.length < 6) {
+      Alert.alert('Validation', 'Password must be at least 6 characters.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await apiFetch(`/api/users/${userId}`, token, {
+        method: 'PUT',
+        body:   JSON.stringify({ password: passwordForm.newPassword }),
+      });
+      Alert.alert('Success', 'Password changed successfully.');
+      setPasswordModal(false);
+      setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Could not change password.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Logout — dispatch to Redux, wipes token + data in one shot, no AsyncStorage
+  const handleLogout = () => {
+    Alert.alert('Log Out', 'Are you sure you want to log out?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text:    'Log Out',
+        style:   'destructive',
+        onPress: () => dispatch(userLogout()),
+      },
+    ]);
+  };
+
+  // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
     <View style={styles.container}>
-      <StatusBar
-        barStyle="light-content"
-        backgroundColor={COLORS.primary}
-      />
-      <ScrollView
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Top Section with Profile Picture and Name */}
-        <View style={styles.topSection}>
-          <View style={styles.avatarContainer}>
-            <Image source={{ uri: avatarUrl }} style={styles.avatar} />
-            <TouchableOpacity style={styles.editAvatarButton}>
-              <Icon name="camera" size={16} color={COLORS.textLight} />
-            </TouchableOpacity>
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.primary} />
+
+      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+
+        {/* Header */}
+        <View style={styles.header}>
+          <View style={styles.avatarWrapper}>
+            <Image source={{ uri: avatarUri }} style={styles.avatar} />
           </View>
-          <Text style={styles.name}>{data?.username || 'Guest'}</Text>
-          <Text style={styles.email}>{data?.email || 'No email provided'}</Text>
-          <TouchableOpacity style={styles.editProfileButton}>
-            <Icon name="user-edit" size={16} color={COLORS.textLight} />
-            <Text style={styles.editProfileButtonText}>Edit Profile</Text>
+          <Text style={styles.name}>{data?.fullName || data?.username || 'User'}</Text>
+          <Text style={styles.username}>@{data?.username}</Text>
+
+          <View style={[styles.roleBadge, { backgroundColor: getRoleColor(primaryRole) + '22' }]}>
+            <View style={[styles.roleDot, { backgroundColor: getRoleColor(primaryRole) }]} />
+            <Text style={[styles.roleText, { color: getRoleColor(primaryRole) }]}>
+              {getRoleLabel(primaryRole)}
+            </Text>
+          </View>
+
+          <TouchableOpacity style={styles.editBtn} onPress={openEditModal}>
+            <Text style={styles.editBtnText}>Edit Profile</Text>
           </TouchableOpacity>
         </View>
 
-        {/* Profile Details Section */}
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Account Details</Text>
-          <ProfileItem
-            icon="user"
-            label="Username"
-            value={data?.username}
-            onPress={handleEditUsername}
-          />
-          <ProfileItem
-            icon="envelope"
-            label="Email"
-            value={data?.email}
-            onPress={handleEditEmail}
-          />
-          <ProfileItem
-            icon="briefcase"
-            label="Role"
-            value={data?.roles?.join(', ') || 'User'}
-            isLast={true}
-          />
-        </View>
+        {/* Account Details */}
+        <SectionCard title="Account Details">
+          <InfoRow label="Full Name" value={data?.fullName} />
+          <InfoRow label="Username"  value={data?.username} />
+          <InfoRow label="Email"     value={data?.email} />
+          <InfoRow label="Role"      value={getRoleLabel(primaryRole)} last />
+        </SectionCard>
 
-        {/* Settings & Preferences Section */}
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Settings</Text>
-          <ProfileItem
-            icon="lock"
-            label="Change Password"
-            onPress={handleChangePassword}
-          />
-          <ProfileItem
-            icon="shield-alt"
-            label="Privacy Settings"
-            onPress={handlePrivacySettings}
-            isLast={true}
-          />
-        </View>
+        {/* Settings */}
+        <SectionCard title="Settings">
+          <ActionRow label="Change Password"  onPress={() => setPasswordModal(true)} />
+          <ActionRow label="Privacy Settings" onPress={() => Alert.alert('Coming Soon', 'Privacy settings will be available soon.')} last />
+        </SectionCard>
 
-        {/* Logout Button */}
-        <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-          <Icon name="sign-out-alt" color={COLORS.primary} size={20} />
+        {/* Logout */}
+        <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout} activeOpacity={0.8}>
           <Text style={styles.logoutText}>Log Out</Text>
         </TouchableOpacity>
+
+        <Text style={styles.version}>v1.0.0 · La Casa Gaudencia</Text>
       </ScrollView>
+
+      {/* Edit Profile Modal */}
+      <EditModal
+        visible={editModal}
+        title="Edit Profile"
+        fields={[
+          { label: 'Full Name', key: 'fullName' },
+          { label: 'Username',  key: 'username' },
+          { label: 'Email',     key: 'email', keyboardType: 'email-address' },
+        ]}
+        values={profileForm}
+        onChange={(k, v) => setProfileForm(p => ({ ...p, [k]: v }))}
+        onCancel={() => setEditModal(false)}
+        onSave={handleSaveProfile}
+        loading={saving}
+      />
+
+      {/* Change Password Modal */}
+      <EditModal
+        visible={passwordModal}
+        title="Change Password"
+        fields={[
+          { label: 'Current Password', key: 'currentPassword', secure: true },
+          { label: 'New Password',     key: 'newPassword',     secure: true },
+          { label: 'Confirm Password', key: 'confirmPassword', secure: true },
+        ]}
+        values={passwordForm}
+        onChange={(k, v) => setPasswordForm(p => ({ ...p, [k]: v }))}
+        onCancel={() => setPasswordModal(false)}
+        onSave={handleChangePassword}
+        loading={saving}
+      />
     </View>
   );
 };
 
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.background,
+  container: { flex: 1, backgroundColor: COLORS.background },
+  scroll:    { paddingBottom: SPACING.xxl },
+
+  header: {
+    backgroundColor:      COLORS.primary,
+    alignItems:           'center',
+    paddingTop:           Platform.OS === 'ios' ? 64 : 48,
+    paddingBottom:        SPACING.xl,
+    borderBottomLeftRadius:  RADIUS.xl,
+    borderBottomRightRadius: RADIUS.xl,
+    ...SHADOW.brand,
   },
-  content: {
-    paddingBottom: 40,
+  avatarWrapper: {
+    borderRadius:  RADIUS.full,
+    borderWidth:   3,
+    borderColor:   'rgba(255,255,255,0.6)',
+    marginBottom:  SPACING.md,
+    ...SHADOW.md,
   },
-  topSection: {
-    backgroundColor: COLORS.primary,
-    alignItems: 'center',
-    paddingTop: Platform.OS === 'ios' ? 60 : 40,
-    paddingBottom: 30,
-    borderBottomLeftRadius: 40,
-    borderBottomRightRadius: 40,
+  avatar:   { width: 96, height: 96, borderRadius: RADIUS.full },
+  name:     { color: COLORS.textLight, fontSize: 22, fontFamily: FONTS.display, fontWeight: '700', letterSpacing: 0.3 },
+  username: { color: 'rgba(255,255,255,0.75)', fontSize: 14, fontFamily: FONTS.body, marginTop: 2 },
+  roleBadge: {
+    flexDirection:    'row',
+    alignItems:       'center',
+    borderRadius:     RADIUS.full,
+    paddingHorizontal: SPACING.md,
+    paddingVertical:  SPACING.xs,
+    marginTop:        SPACING.sm,
+    gap:              6,
   },
-  avatarContainer: {
-    position: 'relative',
-    marginBottom: 15,
-    backgroundColor: COLORS.surface,
-    borderRadius: 60,
-    padding: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 8,
+  roleDot:  { width: 7, height: 7, borderRadius: RADIUS.full },
+  roleText: { fontSize: 12, fontFamily: FONTS.bold, fontWeight: '700', letterSpacing: 0.5 },
+  editBtn: {
+    marginTop:        SPACING.md,
+    backgroundColor:  'rgba(255,255,255,0.18)',
+    borderWidth:      1.5,
+    borderColor:      'rgba(255,255,255,0.45)',
+    borderRadius:     RADIUS.full,
+    paddingHorizontal: SPACING.lg,
+    paddingVertical:  SPACING.sm,
   },
-  avatar: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    resizeMode: 'cover',
-    borderWidth: 2,
-    borderColor: COLORS.surface,
+  editBtnText: { color: COLORS.textLight, fontSize: 13, fontFamily: FONTS.bold, fontWeight: '600' },
+
+  card: {
+    backgroundColor:   COLORS.surface,
+    marginHorizontal:  SPACING.md,
+    marginTop:         SPACING.lg,
+    borderRadius:      RADIUS.lg,
+    paddingHorizontal: SPACING.md,
+    paddingTop:        SPACING.md,
+    paddingBottom:     SPACING.sm,
+    ...SHADOW.sm,
   },
-  editAvatarButton: {
-    position: 'absolute',
-    bottom: 5,
-    right: 5,
-    backgroundColor: COLORS.accent,
-    borderRadius: 20,
-    padding: 8,
-    borderWidth: 2,
-    borderColor: COLORS.surface,
+  cardTitle: {
+    fontSize:      13,
+    fontFamily:    FONTS.bold,
+    fontWeight:    '700',
+    color:         COLORS.textMuted,
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    marginBottom:  SPACING.sm,
   },
-  name: {
-    color: COLORS.textLight,
-    fontSize: 26,
-    fontWeight: 'bold',
+  infoRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: SPACING.md },
+  infoRowBorder: { borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  infoLabel:     { fontSize: 15, fontFamily: FONTS.medium, color: COLORS.textDark },
+  infoValue:     { fontSize: 14, fontFamily: FONTS.body, color: COLORS.textMuted, maxWidth: '55%', textAlign: 'right' },
+  chevron:       { fontSize: 20, color: COLORS.textMuted, lineHeight: 22 },
+
+  logoutBtn: {
+    marginHorizontal: SPACING.md,
+    marginTop:        SPACING.xl,
+    height:           50,
+    borderRadius:     RADIUS.md,
+    borderWidth:      1.5,
+    borderColor:      COLORS.primary,
+    justifyContent:   'center',
+    alignItems:       'center',
+  },
+  logoutText: { color: COLORS.primary, fontSize: 15, fontFamily: FONTS.bold, fontWeight: '600' },
+  version:    { textAlign: 'center', color: COLORS.textMuted, fontSize: 12, fontFamily: FONTS.body, marginTop: SPACING.lg },
+
+  modalOverlay: { flex: 1, backgroundColor: COLORS.overlay, justifyContent: 'flex-end' },
+  modalSheet: {
+    backgroundColor:     COLORS.surface,
+    borderTopLeftRadius:  RADIUS.xl,
+    borderTopRightRadius: RADIUS.xl,
+    paddingHorizontal:   SPACING.lg,
+    paddingBottom:       Platform.OS === 'ios' ? 40 : SPACING.xl,
+    paddingTop:          SPACING.md,
+    ...SHADOW.lg,
+  },
+  modalHandle: { width: 40, height: 4, backgroundColor: COLORS.border, borderRadius: RADIUS.full, alignSelf: 'center', marginBottom: SPACING.md },
+  modalTitle:  { fontSize: 18, fontFamily: FONTS.display, fontWeight: '700', color: COLORS.textDark, marginBottom: SPACING.lg },
+  modalField:  { marginBottom: SPACING.md },
+  modalLabel: {
+    fontSize:      12,
+    fontFamily:    FONTS.bold,
+    fontWeight:    '600',
+    color:         COLORS.textMuted,
     letterSpacing: 0.5,
-    fontFamily: Platform.OS === 'ios' ? 'Avenir-Heavy' : 'sans-serif-condensed',
-    marginTop: 5,
+    textTransform: 'uppercase',
+    marginBottom:  SPACING.xs,
   },
-  email: {
-    color: 'rgba(255,255,255,0.8)',
-    fontSize: 14,
-    marginTop: 5,
-    fontFamily: Platform.OS === 'ios' ? 'Avenir-Medium' : 'sans-serif-medium',
+  modalInput: {
+    backgroundColor:   COLORS.surfaceAlt,
+    borderRadius:      RADIUS.md,
+    paddingHorizontal: SPACING.md,
+    height:            48,
+    fontSize:          15,
+    fontFamily:        FONTS.body,
+    color:             COLORS.textDark,
+    borderWidth:       1,
+    borderColor:       COLORS.border,
   },
-  editProfileButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: COLORS.primaryDark,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 25,
-    marginTop: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 5,
-  },
-  editProfileButtonText: {
-    color: COLORS.textLight,
-    fontSize: 14,
-    fontWeight: '600',
-    marginLeft: 8,
-    fontFamily: Platform.OS === 'ios' ? 'Avenir-Heavy' : 'sans-serif-condensed',
-  },
-  sectionCard: {
-    backgroundColor: COLORS.surface,
-    marginHorizontal: 15,
-    marginTop: 25,
-    borderRadius: 20,
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
-    elevation: 5,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: COLORS.textDark,
-    marginBottom: 10,
-    paddingLeft: 5,
-    paddingTop: 10,
-    fontFamily: Platform.OS === 'ios' ? 'Avenir-Heavy' : 'sans-serif-condensed',
-  },
-  profileItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 15,
-  },
-  profileItemLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  profileItemIcon: {
-    marginRight: 15,
-  },
-  profileItemLabel: {
-    fontSize: 16,
-    color: COLORS.secondary,
-    fontFamily: Platform.OS === 'ios' ? 'Avenir-Medium' : 'sans-serif-medium',
-  },
-  profileItemRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  profileItemValue: {
-    fontSize: 15,
-    color: COLORS.textMuted,
-    marginRight: 10,
-    fontFamily: Platform.OS === 'ios' ? 'Avenir' : 'sans-serif',
-  },
-  arrowIcon: {
-    opacity: 0.6,
-  },
-  profileItemDivider: {
-    height: 1,
-    backgroundColor: COLORS.border,
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    marginHorizontal: -20,
-  },
-  logoutButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'transparent',
-    borderWidth: 1.5,
-    borderColor: COLORS.primary,
-    marginHorizontal: 15,
-    marginTop: 30,
-    height: 50,
-    borderRadius: 12,
-  },
-  logoutText: {
-    color: COLORS.primary,
-    fontSize: 16,
-    fontWeight: '600',
-    marginLeft: 10,
-    fontFamily: Platform.OS === 'ios' ? 'Avenir-Heavy' : 'sans-serif-condensed',
-  },
+  modalActions:       { flexDirection: 'row', gap: SPACING.sm, marginTop: SPACING.md },
+  modalBtnCancel:     { flex: 1, height: 48, borderRadius: RADIUS.md, borderWidth: 1.5, borderColor: COLORS.border, justifyContent: 'center', alignItems: 'center' },
+  modalBtnCancelText: { color: COLORS.textMuted, fontSize: 15, fontFamily: FONTS.bold, fontWeight: '600' },
+  modalBtnSave:       { flex: 1, height: 48, borderRadius: RADIUS.md, backgroundColor: COLORS.primary, justifyContent: 'center', alignItems: 'center', ...SHADOW.brand },
+  modalBtnSaveText:   { color: COLORS.textLight, fontSize: 15, fontFamily: FONTS.bold, fontWeight: '600' },
 });
 
 export default ProfileScreen;

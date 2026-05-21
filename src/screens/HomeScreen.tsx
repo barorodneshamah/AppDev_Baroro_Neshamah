@@ -1,669 +1,431 @@
-import { useNavigation, NavigationProp } from '@react-navigation/native';
-import React, { useState, FC } from 'react';
+// src/screens/HomeScreen.tsx
+import React, { FC, useEffect, useState, useCallback } from 'react';
 import {
-  Image,
-  ImageBackground,
-  Platform,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-  Dimensions,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity,
+  Platform, StatusBar, Image, ActivityIndicator,
+  ImageBackground, RefreshControl, Dimensions,
 } from 'react-native';
-import { useDispatch, useSelector } from 'react-redux';
-import { resetLogin } from '../app/reducers/auth';
-import { ROUTES } from '../utils';
-import CustomListItem from '../components/CustomListItem';
+import { useNavigation, NavigationProp } from '@react-navigation/native';
+import { useSelector } from 'react-redux';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import {
+  getTours, getRooms, getPackages, getReservations,
+} from '../app/api/api';
+import { RootState } from '../store';
+import { COLORS, FONTS, RADIUS, SHADOW, SPACING, getStatusColor } from '../theme';
+import ROUTES from '../utils';
 
 const { width } = Dimensions.get('window');
+const API_BASE  = 'http://192.168.254.138:8000';
 
-interface Category {
-  id: string;
-  name: string;
-  icon: string;
-}
-
-interface FeaturedItem {
-  id: number;
-  title: string;
-  subtitle: string;
-  image: string;
-  price: string;
-  rating: number;
-}
-
-const COLORS = {
-  primary: '#E07A5F',
-  primaryDark: '#C25A40',
-  secondary: '#3D405B',
-  accent: '#81B29A',
-  background: '#F4F1DE',
-  surface: '#FFFFFF',
-  textDark: '#2D3142',
-  textLight: '#FFFFFF',
-  textMuted: '#9A9A9A',
-  border: '#E8E8E8',
+const resolveImg = (path?: string | null, seed = 'item'): string => {
+  if (!path) return `https://picsum.photos/seed/${seed}/600/400`;
+  if (path.startsWith('http')) return path;
+  return `${API_BASE}${path}`;
 };
 
-const CATEGORIES: Category[] = [
-  { id: 'hotel', name: 'Hotels', icon: 'bed' },
-  { id: 'resort', name: 'Resorts', icon: 'umbrella-beach' },
-  { id: 'villa', name: 'Villas', icon: 'home' },
-  { id: 'dining', name: 'Dining', icon: 'utensils' },
-  { id: 'travel', name: 'Travel', icon: 'plane' },
+// ─── Service category tiles ───────────────────────────────────────────────────
+
+const CATEGORIES = [
+  { icon: 'bed',                   label: 'Rooms',    color: '#1565c0' },
+  { icon: 'map-marker-path',       label: 'Tours',    color: '#2e7d32' },
+  { icon: 'spa',                   label: 'Spa',      color: '#ad1457' },
+  { icon: 'silverware-fork-knife', label: 'Dining',   color: '#e65100' },
+  { icon: 'gift',                  label: 'Packages', color: '#6a1b9a' },
 ];
 
-const FEATURED_ITEMS: FeaturedItem[] = [
-  {
-    id: 1,
-    title: 'Boutique Hotel',
-    subtitle: 'Find your perfect stay',
-    image: 'https://images.unsplash.com/photo-1566073771259-6a8506099945?w=800',
-    price: 'From $120/night',
-    rating: 4.8,
-  },
-  {
-    id: 2,
-    title: 'Travel Planning',
-    subtitle: 'Personalized itineraries',
-    image: 'https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?w=800',
-    price: 'Free Guide',
-    rating: 4.9,
-  },
-  {
-    id: 3,
-    title: 'Fine Dining',
-    subtitle: 'Local cuisine experiences',
-    image: 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=800',
-    price: 'Reservations',
-    rating: 4.7,
-  },
-];
-
-interface IconProps {
-  name: string;
-  size?: number;
-  color?: string;
-}
-
-const Icon: FC<IconProps> = ({ name, size = 20, color = COLORS.secondary }) => (
-  <View
-    style={{
-      width: size,
-      height: size,
-      backgroundColor: color,
-      borderRadius: size / 2,
-      opacity: 0.3,
-    }}
-  />
+const CategoryRow: FC<{ onPress: () => void }> = ({ onPress }) => (
+  <View style={S.catRow}>
+    {CATEGORIES.map(c => (
+      <TouchableOpacity key={c.label} style={S.catItem} onPress={onPress} activeOpacity={0.75}>
+        <View style={[S.catIcon, { backgroundColor: c.color + '16' }]}>
+          <Icon name={c.icon} size={24} color={c.color} />
+        </View>
+        <Text style={S.catLabel}>{c.label}</Text>
+      </TouchableOpacity>
+    ))}
+  </View>
 );
 
-const HomeScreen: FC = () => {
-  const navigation = useNavigation<NavigationProp<any>>();
-  const dispatch = useDispatch();
-  const { data } = useSelector((state: any) => state.auth);
-  const [selectedCategory, setSelectedCategory] = useState('hotel');
-  const [location, setLocation] = useState('');
+// ─── Section header ───────────────────────────────────────────────────────────
 
-  const handleLogout = () => dispatch(resetLogin());
+const SectionHeader: FC<{ title: string; onSeeAll?: () => void }> = ({ title, onSeeAll }) => (
+  <View style={S.secRow}>
+    <Text style={S.secTitle}>{title}</Text>
+    {onSeeAll && (
+      <TouchableOpacity onPress={onSeeAll}>
+        <Text style={S.seeAll}>View All</Text>
+      </TouchableOpacity>
+    )}
+  </View>
+);
+
+// ─── Featured room / tour card ────────────────────────────────────────────────
+
+const FeaturedCard: FC<{ item: any; type: string; onPress: () => void }> = ({ item, type, onPress }) => {
+  const price = type === 'room'
+    ? `₱${Number(item.pricePerNight || item.price || 0).toLocaleString()}/night`
+    : `₱${Number(item.price || 0).toLocaleString()}`;
 
   return (
-    <View style={styles.container}>
+    <TouchableOpacity style={FC_S.wrap} onPress={onPress} activeOpacity={0.88}>
+      <ImageBackground
+        source={{ uri: resolveImg(item.mainImage || item.image, `${type}${item.id}`) }}
+        style={FC_S.image}
+        imageStyle={{ borderRadius: RADIUS.lg }}
+      >
+        <View style={FC_S.overlay}>
+          <View style={FC_S.typePill}>
+            <Text style={FC_S.typePillText}>{type.charAt(0).toUpperCase() + type.slice(1)}</Text>
+          </View>
+          <View style={FC_S.bottom}>
+            <Text style={FC_S.name} numberOfLines={1}>{item.name || item.roomNumber}</Text>
+            {item.location ? <Text style={FC_S.loc} numberOfLines={1}><Icon name="map-marker" size={11} color="rgba(255,255,255,0.85)" />  {item.location}</Text> : null}
+            <Text style={FC_S.price}>{price}</Text>
+          </View>
+        </View>
+      </ImageBackground>
+    </TouchableOpacity>
+  );
+};
+
+const FC_S = StyleSheet.create({
+  wrap:     { width: width * 0.68, marginRight: 14, borderRadius: RADIUS.lg, overflow: 'hidden', ...SHADOW.md },
+  image:    { width: '100%', height: 195 },
+  overlay:  { flex: 1, backgroundColor: 'rgba(0,0,0,0.28)', padding: 12, justifyContent: 'space-between' },
+  typePill: { alignSelf: 'flex-start', backgroundColor: 'rgba(255,255,255,0.22)', borderRadius: RADIUS.full, paddingHorizontal: 10, paddingVertical: 4 },
+  typePillText: { color: '#fff', fontSize: 10, fontFamily: FONTS.bold, fontWeight: '700' },
+  bottom:   { gap: 3 },
+  name:     { color: '#fff', fontSize: 15, fontFamily: FONTS.display, fontWeight: '700' },
+  loc:      { color: 'rgba(255,255,255,0.85)', fontSize: 11, fontFamily: FONTS.body },
+  price:    { color: '#fff', fontSize: 14, fontFamily: FONTS.bold, fontWeight: '700', marginTop: 2 },
+});
+
+// ─── Package card ─────────────────────────────────────────────────────────────
+
+const PackageCard: FC<{ item: any; onPress: () => void }> = ({ item, onPress }) => (
+  <TouchableOpacity style={PK_S.wrap} onPress={onPress} activeOpacity={0.88}>
+    <Image source={{ uri: resolveImg(item.mainImage || item.image, `pkg${item.id}`) }} style={PK_S.image} />
+    {item.discountPercentage ? (
+      <View style={PK_S.badge}><Text style={PK_S.badgeText}>{item.discountPercentage}% OFF</Text></View>
+    ) : null}
+    <View style={PK_S.body}>
+      <Text style={PK_S.name} numberOfLines={1}>{item.name}</Text>
+      {item.packageType ? <Text style={PK_S.type}>{item.packageType}</Text> : null}
+      <Text style={PK_S.price}>₱{Number(item.packagePrice || item.price || 0).toLocaleString()}</Text>
+    </View>
+  </TouchableOpacity>
+);
+
+const PK_S = StyleSheet.create({
+  wrap:      { width: 170, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, marginRight: 12, overflow: 'hidden', ...SHADOW.sm },
+  image:     { width: '100%', height: 105 },
+  badge:     { position: 'absolute', top: 8, right: 8, backgroundColor: COLORS.primary, borderRadius: RADIUS.sm, paddingHorizontal: 6, paddingVertical: 3 },
+  badgeText: { fontSize: 9, fontFamily: FONTS.bold, fontWeight: '700', color: '#fff' },
+  body:      { padding: 10, gap: 2 },
+  name:      { fontSize: 13, fontFamily: FONTS.bold, fontWeight: '700', color: COLORS.textDark },
+  type:      { fontSize: 10, color: COLORS.textMuted, fontFamily: FONTS.body },
+  price:     { fontSize: 14, fontFamily: FONTS.bold, fontWeight: '700', color: COLORS.primary, marginTop: 2 },
+});
+
+// ─── Booking pill ─────────────────────────────────────────────────────────────
+
+const TYPE_META: Record<string, { icon: string; color: string }> = {
+  room:    { icon: 'bed',                   color: '#1565c0' },
+  tour:    { icon: 'map-marker-path',       color: '#2e7d32' },
+  package: { icon: 'gift',                  color: '#6a1b9a' },
+  food:    { icon: 'silverware-fork-knife', color: '#e65100' },
+  spa:     { icon: 'spa',                   color: '#ad1457' },
+};
+
+const BookingPill: FC<{ res: any; onPress: () => void }> = ({ res, onPress }) => {
+  const type   = res.serviceType || 'room';
+  const meta   = TYPE_META[type] ?? TYPE_META.room;
+  const status = res.status || 'Pending';
+  const name   = res.itemName || res.serviceName || res.item?.name || `#${res.id}`;
+  return (
+    <TouchableOpacity style={BP_S.wrap} onPress={onPress} activeOpacity={0.85}>
+      <View style={[BP_S.icon, { backgroundColor: meta.color + '18' }]}>
+        <Icon name={meta.icon} size={18} color={meta.color} />
+      </View>
+      <View style={BP_S.content}>
+        <Text style={BP_S.name} numberOfLines={1}>{name}</Text>
+        <Text style={[BP_S.status, { color: getStatusColor(status) }]}>{status}</Text>
+      </View>
+      <Icon name="chevron-right" size={16} color={COLORS.border} />
+    </TouchableOpacity>
+  );
+};
+
+const BP_S = StyleSheet.create({
+  wrap:    { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.surface, borderRadius: RADIUS.md, padding: 12, marginBottom: 8, ...SHADOW.sm, gap: 10 },
+  icon:    { width: 38, height: 38, borderRadius: RADIUS.md, alignItems: 'center', justifyContent: 'center' },
+  content: { flex: 1, gap: 2 },
+  name:    { fontSize: 13, fontFamily: FONTS.bold, fontWeight: '700', color: COLORS.textDark },
+  status:  { fontSize: 11, fontFamily: FONTS.bold, fontWeight: '600', textTransform: 'capitalize' },
+});
+
+// ─── Highlight banner ─────────────────────────────────────────────────────────
+
+const HIGHLIGHTS = [
+  { icon: 'bed-queen-outline',       label: 'Luxury Rooms',    sub: 'Comfort & elegance' },
+  { icon: 'waves',                   label: 'Ocean Views',     sub: 'Wake up to paradise' },
+  { icon: 'silverware-fork-knife',   label: 'Fine Dining',     sub: 'Local & international cuisine' },
+  { icon: 'spa',                     label: 'Wellness Spa',    sub: 'Relax & rejuvenate' },
+];
+
+const HighlightCard: FC<{ icon: string; label: string; sub: string }> = ({ icon, label, sub }) => (
+  <View style={HL_S.wrap}>
+    <View style={HL_S.iconWrap}>
+      <Icon name={icon} size={26} color={COLORS.primary} />
+    </View>
+    <Text style={HL_S.label}>{label}</Text>
+    <Text style={HL_S.sub}>{sub}</Text>
+  </View>
+);
+
+const HL_S = StyleSheet.create({
+  wrap:     { width: 130, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, padding: 14, marginRight: 10, alignItems: 'center', gap: 6, ...SHADOW.sm },
+  iconWrap: { width: 48, height: 48, borderRadius: RADIUS.full, backgroundColor: COLORS.primaryFaded, justifyContent: 'center', alignItems: 'center' },
+  label:    { fontSize: 13, fontFamily: FONTS.bold, fontWeight: '700', color: COLORS.textDark, textAlign: 'center' },
+  sub:      { fontSize: 10, fontFamily: FONTS.body, color: COLORS.textMuted, textAlign: 'center', lineHeight: 14 },
+});
+
+// ─── Main screen ──────────────────────────────────────────────────────────────
+
+const HomeScreen: FC = () => {
+  const navigation      = useNavigation<NavigationProp<any>>();
+  const { data, token } = useSelector((state: RootState) => state.auth);
+  const unreadCount     = useSelector((state: RootState) =>
+    state.notifications.items.filter(n => !n.read).length);
+
+  const [tours,        setTours]        = useState<any[]>([]);
+  const [rooms,        setRooms]        = useState<any[]>([]);
+  const [packages,     setPackages]     = useState<any[]>([]);
+  const [reservations, setReservations] = useState<any[]>([]);
+  const [loading,      setLoading]      = useState(true);
+  const [refreshing,   setRefreshing]   = useState(false);
+
+  const fetchAll = useCallback(async () => {
+    try {
+      const [toursRes, roomsRes, pkgsRes, resRes] = await Promise.all([
+        getTours(token).catch(() => ({})),
+        getRooms(token).catch(() => ({})),
+        getPackages(token).catch(() => ({})),
+        getReservations(token).catch(() => ({})),
+      ]);
+      const pick = (r: any) => r?.['hydra:member'] ?? r?.data ?? [];
+      setTours(pick(toursRes).slice(0, 5));
+      setRooms(pick(roomsRes).slice(0, 5));
+      setPackages(pick(pkgsRes).slice(0, 5));
+      const r = resRes as any;
+      setReservations((r?.['hydra:member'] ?? r?.data ?? []).slice(0, 4));
+    } catch (e) {
+      console.error('[HomeScreen]', e);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [token]);
+
+  useEffect(() => { fetchAll(); }, [fetchAll]);
+  const onRefresh = () => { setRefreshing(true); fetchAll(); };
+
+  const goExplore  = () => navigation.navigate(ROUTES.EXPLORE);
+  const goBookings = () => navigation.navigate(ROUTES.BOOKINGS);
+  const goDetail   = (item: any, type: string) =>
+    navigation.navigate(ROUTES.SERVICE_DETAIL, { item, type });
+
+  const name      = data?.fullName || data?.username || 'Guest';
+  const firstName = name.split(' ')[0];
+  const avatarUri = `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=c24a16&color=ffffff&bold=true&size=64`;
+
+  const hour = new Date().getHours();
+  const timeGreet = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+
+  return (
+    <View style={S.container}>
       <StatusBar barStyle="light-content" backgroundColor={COLORS.primary} />
 
-      {/* Header Section */}
-      <View style={styles.header}>
-        <View style={styles.headerTop}>
-          <View>
-            <Text style={styles.greeting}>Good Morning,</Text>
-            <Text style={styles.username}>{data?.username || 'Guest'}</Text>
+      {/* ── Branded header ──────────────────────────────────────────── */}
+      <View style={S.header}>
+        <View style={S.headerTop}>
+          <View style={S.brandWrap}>
+            <Text style={S.brandName}>La Casa Gaudencia</Text>
+            <Text style={S.brandTagline}>A House of Joy, Warmth, and Memories</Text>
           </View>
-          <TouchableOpacity
-            style={styles.profileButton}
-            onPress={() => navigation.navigate(ROUTES.PROFILE)}
-          >
-            <Image
-              source={{
-                uri: `https://ui-avatars.com/api/?name=${
-                  data?.username || 'Guest'
-                }&background=E07A5F&color=fff`,
-              }}
-              style={styles.avatar}
-            />
-          </TouchableOpacity>
-        </View>
-
-        {/* Search Container */}
-        <View style={styles.searchContainer}>
-          <View style={styles.searchBar}>
-            <Icon name="map-marker" size={20} color={COLORS.primary} />
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Where are you going?"
-              placeholderTextColor={COLORS.textMuted}
-              value={location}
-              onChangeText={setLocation}
-            />
-          </View>
-
-          <View style={styles.dateRow}>
-            <TouchableOpacity style={styles.dateButton}>
-              <Icon name="calendar" size={16} color={COLORS.secondary} />
-              <Text style={styles.dateText}>Check-in</Text>
+          <View style={S.headerRight}>
+            <TouchableOpacity
+              style={S.iconBtn}
+              onPress={() => navigation.navigate(ROUTES.NOTIFICATIONS)}
+              activeOpacity={0.8}
+            >
+              <Icon name="bell-outline" size={22} color="#fff" />
+              {unreadCount > 0 && (
+                <View style={S.bellBadge}>
+                  <Text style={S.bellBadgeText}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
+                </View>
+              )}
             </TouchableOpacity>
-            <View style={styles.divider} />
-            <TouchableOpacity style={styles.dateButton}>
-              <Icon name="calendar" size={16} color={COLORS.secondary} />
-              <Text style={styles.dateText}>Check-out</Text>
+            <TouchableOpacity onPress={() => navigation.navigate(ROUTES.PROFILE)} activeOpacity={0.8}>
+              <Image source={{ uri: avatarUri }} style={S.avatar} />
             </TouchableOpacity>
           </View>
-
-          <TouchableOpacity style={styles.searchButton}>
-            <Text style={styles.searchButtonText}>Search</Text>
-          </TouchableOpacity>
         </View>
+
+        <Text style={S.greeting}>{timeGreet}, <Text style={S.greetingName}>{firstName}!</Text></Text>
+        <Text style={S.greetingSub}>Discover paradise in every stay.</Text>
       </View>
 
       <ScrollView
-        style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
+        contentContainerStyle={S.scroll}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />}
       >
-        {/* Categories */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Categories</Text>
-            <TouchableOpacity>
-              <Text style={styles.seeAll}>See All</Text>
-            </TouchableOpacity>
-          </View>
+        {/* ── Categories ──────────────────────────────────────────────── */}
+        <View style={S.section}>
+          <CategoryRow onPress={goExplore} />
+        </View>
 
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.categoriesContainer}
-          >
-            {CATEGORIES.map((cat) => (
-              <TouchableOpacity
-                key={cat.id}
-                style={[
-                  styles.categoryChip,
-                  selectedCategory === cat.id && styles.categoryChipActive,
-                ]}
-                onPress={() => setSelectedCategory(cat.id)}
-              >
-                <Icon
-                  name={cat.icon}
-                  size={20}
-                  color={
-                    selectedCategory === cat.id
-                      ? COLORS.textLight
-                      : COLORS.secondary
-                  }
-                />
-                <Text
-                  style={[
-                    styles.categoryText,
-                    selectedCategory === cat.id && styles.categoryTextActive,
-                  ]}
-                >
-                  {cat.name}
-                </Text>
-              </TouchableOpacity>
-            ))}
+        {/* ── Why Baroro highlights ────────────────────────────────────── */}
+        <View style={S.section}>
+          <SectionHeader title="Why Baroro" />
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={S.hScroll}>
+            {HIGHLIGHTS.map(h => <HighlightCard key={h.label} {...h} />)}
           </ScrollView>
         </View>
 
-        {/* Featured Cards */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Featured Experiences</Text>
-            <TouchableOpacity>
-              <Text style={styles.seeAll}>See All</Text>
-            </TouchableOpacity>
+        {/* ── Active bookings ──────────────────────────────────────────── */}
+        {reservations.length > 0 && (
+          <View style={S.section}>
+            <SectionHeader title="My Bookings" onSeeAll={goBookings} />
+            {reservations.map(r => (
+              <BookingPill key={r.id} res={r} onPress={goBookings} />
+            ))}
           </View>
+        )}
 
-          {FEATURED_ITEMS.map((item) => (
-            <TouchableOpacity key={item.id} style={styles.featuredCard}>
-              <ImageBackground
-                source={{ uri: item.image }}
-                style={styles.cardImage}
-                imageStyle={styles.cardImageStyle}
-              >
-                <View style={styles.cardOverlay}>
-                  <View style={styles.ratingBadge}>
-                    <Text style={styles.ratingText}>★ {item.rating}</Text>
-                  </View>
-                </View>
-              </ImageBackground>
-
-              <View style={styles.cardContent}>
-                <View style={styles.cardInfo}>
-                  <Text style={styles.cardTitle}>{item.title}</Text>
-                  <View style={styles.locationRow}>
-                    <Icon
-                      name="map-marker"
-                      size={14}
-                      color={COLORS.primary}
-                    />
-                    <Text style={styles.cardSubtitle}>{item.subtitle}</Text>
-                  </View>
-                </View>
-                <View style={styles.priceContainer}>
-                  <Text style={styles.priceText}>{item.price}</Text>
-                  <TouchableOpacity style={styles.bookButton}>
-                    <Text style={styles.bookButtonText}>Book Now</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            </TouchableOpacity>
-          ))}
+        {/* ── Featured rooms ────────────────────────────────────────────── */}
+        <View style={S.section}>
+          <SectionHeader title="Featured Rooms" onSeeAll={goExplore} />
+          {loading
+            ? <ActivityIndicator color={COLORS.primary} style={S.loader} />
+            : rooms.length === 0
+            ? <Text style={S.empty}>No rooms available</Text>
+            : (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={S.hScroll}>
+                {rooms.map(r => (
+                  <FeaturedCard key={r.id} item={r} type="room" onPress={() => goDetail(r, 'room')} />
+                ))}
+              </ScrollView>
+            )
+          }
         </View>
 
-        {/* Quick Actions */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Quick Actions</Text>
-          <View style={styles.quickActionsGrid}>
-            <TouchableOpacity style={styles.actionCard}>
-              <View style={[styles.actionIcon, { backgroundColor: '#FFE5E0' }]}>
-                <Icon name="heart" color={COLORS.primary} size={24} />
-              </View>
-              <Text style={styles.actionText}>Favorites</Text>
-            </TouchableOpacity>
+        {/* ── Tours & activities ────────────────────────────────────────── */}
+        <View style={S.section}>
+          <SectionHeader title="Tours & Activities" onSeeAll={goExplore} />
+          {loading
+            ? <ActivityIndicator color={COLORS.primary} style={S.loader} />
+            : tours.length === 0
+            ? <Text style={S.empty}>No tours available</Text>
+            : (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={S.hScroll}>
+                {tours.map(t => (
+                  <FeaturedCard key={t.id} item={t} type="tour" onPress={() => goDetail(t, 'tour')} />
+                ))}
+              </ScrollView>
+            )
+          }
+        </View>
 
-            <TouchableOpacity style={styles.actionCard}>
-              <View style={[styles.actionIcon, { backgroundColor: '#E0F2F1' }]}>
-                <Icon name="ticket" color={COLORS.accent} size={24} />
-              </View>
-              <Text style={styles.actionText}>My Bookings</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.actionCard}>
-              <View style={[styles.actionIcon, { backgroundColor: '#E3F2FD' }]}>
-                <Icon name="support" color="#2196F3" size={24} />
-              </View>
-              <Text style={styles.actionText}>Support</Text>
-            </TouchableOpacity>
+        {/* ── Packages & promos ─────────────────────────────────────────── */}
+        {!loading && packages.length > 0 && (
+          <View style={S.section}>
+            <SectionHeader title="Packages & Promos" onSeeAll={goExplore} />
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={S.hScroll}>
+              {packages.map(p => (
+                <PackageCard key={p.id} item={p} onPress={() => goDetail(p, 'package')} />
+              ))}
+            </ScrollView>
           </View>
+        )}
+
+        {/* ── Contact CTA ───────────────────────────────────────────────── */}
+        <View style={S.section}>
+          <TouchableOpacity
+            style={S.ctaBanner}
+            onPress={() => navigation.navigate(ROUTES.MESSAGES)}
+            activeOpacity={0.88}
+          >
+            <Icon name="chat-question-outline" size={28} color="#fff" />
+            <View style={{ flex: 1 }}>
+              <Text style={S.ctaTitle}>Questions? We're here to help.</Text>
+              <Text style={S.ctaSub}>Send us a message anytime.</Text>
+            </View>
+            <Icon name="arrow-right" size={20} color="rgba(255,255,255,0.7)" />
+          </TouchableOpacity>
         </View>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Your Dashboard</Text>
-
-          <CustomListItem
-            title="Manage Bookings"
-            description="View and modify your reservations"
-            badgeText="3"
-            iconBackgroundColor="#FFE5E0"
-            accentColor={COLORS.primary}
-            onPress={() => console.log('Manage Bookings')}
-          />
-
-          <CustomListItem
-            title="Saved Preferences"
-            description="Update your travel preferences"
-            badgeText="Updated"
-            iconBackgroundColor="#E0F2F1"
-            accentColor={COLORS.accent}
-            onPress={() => console.log('Saved Preferences')}
-          />
-
-          <CustomListItem
-            title="Loyalty Points"
-            description="Earn rewards on every booking"
-            badgeText="125"
-            iconBackgroundColor="#FFF3E0"
-            accentColor="#FF9800"
-            onPress={() => console.log('Loyalty Points')}
-          />
-
-          <CustomListItem
-            title="Travel Insurance"
-            description="Protect your trip with insurance"
-            badgeText="New"
-            iconBackgroundColor="#E3F2FD"
-            accentColor="#2196F3"
-            onPress={() => console.log('Travel Insurance')}
-          />
-        </View>
-
-        {/* Logout */}
-        <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-          <Icon name="logout" color={COLORS.primary} size={20} />
-          <Text style={styles.logoutText}>Log Out</Text>
-        </TouchableOpacity>
       </ScrollView>
-
-      {/* Bottom Nav */}
-      <View style={styles.bottomNav}>
-        <TouchableOpacity style={styles.navItem}>
-          <Icon name="home" color={COLORS.primary} size={24} />
-          <Text style={[styles.navText, { color: COLORS.primary }]}>Home</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem}>
-          <Icon name="search" color={COLORS.textMuted} size={24} />
-          <Text style={styles.navText}>Explore</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem}>
-          <Icon name="ticket" color={COLORS.textMuted} size={24} />
-          <Text style={styles.navText}>Bookings</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem}>
-          <Icon name="user" color={COLORS.textMuted} size={24} />
-          <Text style={styles.navText}>Profile</Text>
-        </TouchableOpacity>
-      </View>
     </View>
   );
 };
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-  },
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
+const S = StyleSheet.create({
+  container: { flex: 1, backgroundColor: COLORS.background },
+
+  // Header
   header: {
     backgroundColor: COLORS.primary,
-    paddingTop: Platform.OS === 'ios' ? 50 : 40,
-    paddingHorizontal: 20,
-    paddingBottom: 30,
-    borderBottomLeftRadius: 30,
-    borderBottomRightRadius: 30,
-    shadowColor: COLORS.primary,
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.3,
-    shadowRadius: 20,
-    elevation: 10,
+    paddingTop: Platform.OS === 'ios' ? 56 : 42,
+    paddingHorizontal: SPACING.lg,
+    paddingBottom: SPACING.lg,
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
+    ...SHADOW.brand,
   },
-  headerTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 20,
+  headerTop:  { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.md },
+  brandWrap:  {},
+  brandName:  { color: '#fff', fontSize: 24, fontFamily: FONTS.display, fontWeight: '700', letterSpacing: 2 },
+  brandTagline: { color: 'rgba(255,255,255,0.7)', fontSize: 11, fontFamily: FONTS.body, letterSpacing: 1, marginTop: 1 },
+  headerRight:{ flexDirection: 'row', alignItems: 'center', gap: 10 },
+  iconBtn:    { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.18)', justifyContent: 'center', alignItems: 'center' },
+  bellBadge:  { position: 'absolute', top: 4, right: 4, minWidth: 14, height: 14, borderRadius: 7, backgroundColor: '#ef4444', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 2, borderWidth: 1.5, borderColor: COLORS.primary },
+  bellBadgeText: { fontSize: 8, fontFamily: FONTS.bold, fontWeight: '700', color: '#fff' },
+  avatar:     { width: 40, height: 40, borderRadius: 20, borderWidth: 2, borderColor: 'rgba(255,255,255,0.5)' },
+  greeting:   { color: 'rgba(255,255,255,0.85)', fontSize: 16, fontFamily: FONTS.body },
+  greetingName: { color: '#fff', fontFamily: FONTS.bold, fontWeight: '700' },
+  greetingSub:{ color: 'rgba(255,255,255,0.6)', fontSize: 12, fontFamily: FONTS.body, marginTop: 3, fontStyle: 'italic' },
+
+  // Layout
+  scroll:   { paddingBottom: 110, paddingTop: SPACING.lg },
+  section:  { marginBottom: SPACING.lg, paddingHorizontal: SPACING.md },
+  hScroll:  { marginLeft: -SPACING.md, paddingLeft: SPACING.md },
+  loader:   { marginVertical: 24 },
+  empty:    { color: COLORS.textMuted, fontSize: 13, fontFamily: FONTS.body, textAlign: 'center', paddingVertical: 20 },
+
+  // Section header
+  secRow:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.md },
+  secTitle: { fontSize: 18, fontFamily: FONTS.display, fontWeight: '700', color: COLORS.textDark },
+  seeAll:   { fontSize: 13, color: COLORS.primary, fontFamily: FONTS.bold, fontWeight: '600' },
+
+  // Categories
+  catRow:   { flexDirection: 'row', justifyContent: 'space-between' },
+  catItem:  { alignItems: 'center', gap: 6 },
+  catIcon:  { width: 54, height: 54, borderRadius: RADIUS.lg, alignItems: 'center', justifyContent: 'center' },
+  catLabel: { fontSize: 11, fontFamily: FONTS.bold, fontWeight: '600', color: COLORS.textDark },
+
+  // Contact CTA banner
+  ctaBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 14,
+    backgroundColor: COLORS.primary, borderRadius: RADIUS.xl,
+    padding: 18, ...SHADOW.brand,
   },
-  greeting: {
-    color: 'rgba(255,255,255,0.8)',
-    fontSize: 14,
-  },
-  username: {
-    color: COLORS.textLight,
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginTop: 4,
-  },
-  profileButton: {
-    width: 45,
-    height: 45,
-    borderRadius: 22.5,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.3)',
-  },
-  avatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-  },
-  searchContainer: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 20,
-    padding: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
-    elevation: 5,
-  },
-  searchBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F8F9FA',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    height: 45,
-    marginBottom: 12,
-  },
-  searchInput: {
-    flex: 1,
-    marginLeft: 10,
-    fontSize: 15,
-    color: COLORS.textDark,
-  },
-  dateRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  dateButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-  },
-  dateText: {
-    marginLeft: 8,
-    color: COLORS.textMuted,
-    fontSize: 14,
-  },
-  divider: {
-    width: 1,
-    height: 20,
-    backgroundColor: COLORS.border,
-    marginHorizontal: 10,
-  },
-  searchButton: {
-    backgroundColor: COLORS.primary,
-    height: 45,
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  searchButtonText: {
-    color: COLORS.textLight,
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  scrollView: {
-    flex: 1,
-  },
-  scrollContent: {
-    paddingBottom: 100,
-  },
-  section: {
-    marginTop: 25,
-    paddingHorizontal: 20,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 15,
-  },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: COLORS.textDark,
-  },
-  seeAll: {
-    color: COLORS.primary,
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  categoriesContainer: {
-    paddingRight: 20,
-  },
-  categoryChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: COLORS.surface,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 25,
-    marginRight: 10,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    elevation: 2,
-  },
-  categoryChipActive: {
-    backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary,
-  },
-  categoryText: {
-    marginLeft: 8,
-    fontSize: 14,
-    color: COLORS.secondary,
-    fontWeight: '600',
-  },
-  categoryTextActive: {
-    color: COLORS.textLight,
-  },
-  featuredCard: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 20,
-    marginBottom: 20,
-    overflow: 'hidden',
-    elevation: 5,
-  },
-  cardImage: {
-    height: 180,
-    width: '100%',
-  },
-  cardImageStyle: {
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-  },
-  cardOverlay: {
-    flex: 1,
-    justifyContent: 'flex-start',
-    alignItems: 'flex-end',
-    padding: 12,
-  },
-  ratingBadge: {
-    backgroundColor: 'rgba(255,255,255,0.95)',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 20,
-  },
-  ratingText: {
-    color: COLORS.secondary,
-    fontWeight: 'bold',
-    fontSize: 13,
-  },
-  cardContent: {
-    padding: 16,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  cardInfo: {
-    flex: 1,
-  },
-  cardTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: COLORS.textDark,
-    marginBottom: 4,
-  },
-  locationRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  cardSubtitle: {
-    fontSize: 13,
-    color: COLORS.textMuted,
-    marginLeft: 4,
-  },
-  priceContainer: {
-    alignItems: 'flex-end',
-  },
-  priceText: {
-    fontSize: 14,
-    color: COLORS.primary,
-    fontWeight: '700',
-    marginBottom: 8,
-  },
-  bookButton: {
-    backgroundColor: COLORS.primary,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-  },
-  bookButtonText: {
-    color: COLORS.textLight,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  quickActionsGrid: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 10,
-  },
-  actionCard: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 16,
-    padding: 16,
-    alignItems: 'center',
-    width: (width - 60) / 3,
-    elevation: 2,
-  },
-  actionIcon: {
-    width: 50,
-    height: 50,
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  actionText: {
-    fontSize: 12,
-    color: COLORS.secondary,
-    fontWeight: '600',
-    textAlign: 'center',
-  },
-  logoutButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginHorizontal: 20,
-    marginTop: 30,
-    paddingVertical: 16,
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: COLORS.primary,
-  },
-  logoutText: {
-    color: COLORS.primary,
-    fontSize: 16,
-    fontWeight: '600',
-    marginLeft: 8,
-  },
-  bottomNav: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: COLORS.surface,
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    paddingVertical: 12,
-    paddingBottom: Platform.OS === 'ios' ? 30 : 12,
-    borderTopWidth: 1,
-    borderTopColor: '#F0F0F0',
-    elevation: 10,
-  },
-  navItem: {
-    alignItems: 'center',
-  },
-  navText: {
-    fontSize: 11,
-    marginTop: 4,
-    color: COLORS.textMuted,
-  },
+  ctaTitle: { color: '#fff', fontSize: 15, fontFamily: FONTS.bold, fontWeight: '700', marginBottom: 2 },
+  ctaSub:   { color: 'rgba(255,255,255,0.7)', fontSize: 12, fontFamily: FONTS.body },
 });
 
 export default HomeScreen;
