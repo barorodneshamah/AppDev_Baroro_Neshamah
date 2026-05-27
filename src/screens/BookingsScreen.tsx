@@ -1,19 +1,44 @@
 // src/screens/BookingsScreen.tsx
-import React, { FC, useEffect, useState, useCallback, useMemo } from 'react';
+import React, { FC, useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
   Modal, TextInput, ActivityIndicator, Alert, RefreshControl,
   ScrollView, Platform, KeyboardAvoidingView, StatusBar, Dimensions,
+  PermissionsAndroid, Image,
 } from 'react-native';
-import { useSelector } from 'react-redux';
+import { SuccessModal, SuccessModalConfig } from '../components/AppModals';
+import { launchImageLibrary } from 'react-native-image-picker';
+import { useSelector, useDispatch } from 'react-redux';
 import { useRoute, RouteProp } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { Calendar, DateData } from 'react-native-calendars';
 import {
   getRooms, getTours, getPackages, getReservations, getPayments,
   createReservation, getMercureToken, submitPayment, getSpaServices,
+  createWallPost, uploadWallImage, getMyWallPosts, rescheduleReservation as apiReschedule,
+  isAuthError,
 } from '../app/api/api';
+import { userLogout } from '../app/reducers/auth';
 import { COLORS, FONTS, RADIUS, SHADOW, SPACING } from '../theme';
+import { addNotification } from '../app/reducers/notifications';
+import { markReservationShared, setSharedReservationIds, markReservationRescheduled } from '../app/reducers/wall';
+import API_BASE_URL from '../config/api.config';
+
+const UPLOAD_DIR: Record<string, string> = {
+  room: 'uploads/rooms', tour: 'uploads/tours', food: 'uploads/foods',
+  package: 'uploads/packages', spa: 'uploads/spas',
+};
+
+const resolveImg = (path?: string | null, seed = 'item', type?: string): string => {
+  if (!path) return `https://picsum.photos/seed/${seed}/600/400`;
+  if (path.startsWith('http')) {
+    return path.replace(/https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/, API_BASE_URL);
+  }
+  if (path.startsWith('/')) return `${API_BASE_URL}${path}`;
+  if (path.startsWith('uploads/')) return `${API_BASE_URL}/${path}`;
+  if (type && UPLOAD_DIR[type]) return `${API_BASE_URL}/${UPLOAD_DIR[type]}/${path}`;
+  return `${API_BASE_URL}/uploads/${path}`;
+};
 
 const { width } = Dimensions.get('window');
 
@@ -39,16 +64,17 @@ interface Reservation {
 
 type ServiceType = 'room' | 'tour' | 'package' | 'spa';
 type Step        = 'pick_type' | 'pick_item' | 'fill_form';
-type StatusFilter = 'ALL' | 'PENDING' | 'CONFIRMED' | 'COMPLETED' | 'CANCELLED';
+type StatusFilter = 'ALL' | 'PENDING' | 'CONFIRMED' | 'COMPLETED' | 'RESCHEDULED' | 'CANCELLED';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const STATUS_FILTERS: { key: StatusFilter; label: string }[] = [
-  { key: 'ALL',       label: 'All' },
-  { key: 'PENDING',   label: 'Pending' },
-  { key: 'CONFIRMED', label: 'Confirmed' },
-  { key: 'COMPLETED', label: 'Completed' },
-  { key: 'CANCELLED', label: 'Cancelled' },
+  { key: 'ALL',         label: 'All' },
+  { key: 'PENDING',     label: 'Pending' },
+  { key: 'CONFIRMED',   label: 'Confirmed' },
+  { key: 'COMPLETED',   label: 'Completed' },
+  { key: 'RESCHEDULED', label: 'Rescheduled' },
+  { key: 'CANCELLED',   label: 'Cancelled' },
 ];
 
 const TYPE_META: Record<string, { icon: string; color: string; label: string }> = {
@@ -63,12 +89,17 @@ const TYPE_META: Record<string, { icon: string; color: string; label: string }> 
 
 const statusColor = (s: string) => {
   switch (s?.toUpperCase()) {
-    case 'CONFIRMED':  return '#2e7d32';
-    case 'PENDING':    return '#f57f17';
-    case 'CANCELLED':  return '#c62828';
-    case 'COMPLETED':  return '#1565c0';
-    default:           return COLORS.textMuted;
+    case 'CONFIRMED':   return '#2e7d32';
+    case 'PENDING':     return '#f57f17';
+    case 'CANCELLED':   return '#c62828';
+    case 'COMPLETED':   return '#1565c0';
+    case 'RESCHEDULED': return '#6a1b9a';
+    default:            return COLORS.textMuted;
   }
+};
+
+const STATUS_ORDER: Record<string, number> = {
+  PENDING: 0, CONFIRMED: 1, RESCHEDULED: 2, COMPLETED: 3, CANCELLED: 4,
 };
 
 const paymentColor = (s: string) => {
@@ -335,26 +366,26 @@ const DateField: FC<{
   );
 };
 
-// ─── Stats Card ───────────────────────────────────────────────────────────────
+// ─── Filter Pill ──────────────────────────────────────────────────────────────
 
 const StatCard: FC<{ label: string; count: number; color: string; icon: string; active: boolean; onPress: () => void }> =
-  ({ label, count, color, icon, active, onPress }) => (
+  ({ label, count, icon, active, onPress }) => (
   <TouchableOpacity
-    style={[styles.statCard, active && { borderColor: color, borderWidth: 2 }]}
+    style={[styles.filterPill, active && styles.filterPillActive]}
     onPress={onPress}
-    activeOpacity={0.8}
+    activeOpacity={0.75}
   >
-    <View style={[styles.statIconWrap, { backgroundColor: color + '18' }]}>
-      <Icon name={icon} size={18} color={color} />
+    <Icon name={icon} size={13} color={active ? '#fff' : COLORS.textMuted} />
+    <Text style={[styles.filterPillText, active && styles.filterPillTextActive]}>{label}</Text>
+    <View style={[styles.filterPillBadge, active && styles.filterPillBadgeActive]}>
+      <Text style={styles.filterPillBadgeText}>{count}</Text>
     </View>
-    <Text style={[styles.statCount, { color }]}>{count}</Text>
-    <Text style={styles.statLabel}>{label}</Text>
   </TouchableOpacity>
 );
 
 // ─── Reservation Card ─────────────────────────────────────────────────────────
 
-const ReservationCard: FC<{ item: Reservation; onPay: (r: Reservation) => void; payments: any[] }> = ({ item, onPay, payments }) => {
+const ReservationCard: FC<{ item: Reservation; onPay: (r: Reservation) => void; onShare: (r: Reservation) => void; onReschedule: (r: Reservation) => void; payments: any[]; isShared: boolean; isRescheduled: boolean }> = ({ item, onPay, onShare, onReschedule, payments, isShared, isRescheduled }) => {
   const meta    = TYPE_META[item.serviceType] ?? TYPE_META.room;
   const sColor  = statusColor(item.status);
   const pColor  = paymentColor(item.paymentStatus);
@@ -473,6 +504,37 @@ const ReservationCard: FC<{ item: Reservation; onPay: (r: Reservation) => void; 
             <Text style={styles.payNowText}>{hasRejected ? 'Resubmit Payment' : 'Pay Now'}</Text>
           </TouchableOpacity>
         )}
+
+        {/* Reschedule action — available for pending / confirmed, only if not already rescheduled */}
+        {(item.status?.toUpperCase() === 'PENDING' || item.status?.toUpperCase() === 'CONFIRMED') && !isRescheduled && (
+          <TouchableOpacity style={styles.rescheduleBtn} onPress={() => onReschedule(item)} activeOpacity={0.85}>
+            <Icon name="calendar-edit" size={15} color="#00838f" />
+            <Text style={styles.rescheduleBtnText}>Request Reschedule</Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Rescheduled banner — shown when locally tracked OR backend status is RESCHEDULED */}
+        {isRescheduled && (
+          <View style={styles.rescheduledBanner}>
+            <Icon name="calendar-clock" size={14} color="#6a1b9a" />
+            <Text style={styles.rescheduledBannerText}>Reschedule Requested — Awaiting Confirmation</Text>
+          </View>
+        )}
+
+        {/* Share Experience — shown only on completed, not-yet-shared reservations */}
+        {item.status?.toUpperCase() === 'COMPLETED' && (
+          isShared ? (
+            <View style={styles.sharedBadge}>
+              <Icon name="check-circle" size={15} color={COLORS.success} />
+              <Text style={styles.sharedBadgeText}>Experience Shared</Text>
+            </View>
+          ) : (
+            <TouchableOpacity style={styles.shareExpBtn} onPress={() => onShare(item)} activeOpacity={0.85}>
+              <Icon name="star-outline" size={15} color={COLORS.primary} />
+              <Text style={styles.shareExpText}>Rate & Share Experience</Text>
+            </TouchableOpacity>
+          )
+        )}
       </View>
     </View>
   );
@@ -502,8 +564,12 @@ const EmptyState: FC<{ filter: StatusFilter; onBook: () => void }> = ({ filter, 
 
 const BookingsScreen: FC = () => {
   const { data, token } = useSelector((state: any) => state.auth);
+  const sharedReservationIds: number[]     = useSelector((state: any) => state.wall.sharedReservationIds);
+  const rescheduledReservationIds: number[] = useSelector((state: any) => state.wall.rescheduledReservationIds);
   const userId: number  = data?.user?.id ?? data?.id ?? 0;
   const route           = useRoute<RouteProp<any>>();
+  const dispatch        = useDispatch();
+  const prevReservationsRef = useRef<Reservation[]>([]);
 
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [payments,     setPayments]     = useState<any[]>([]);
@@ -515,7 +581,7 @@ const BookingsScreen: FC = () => {
   const [modalOpen,     setModalOpen]     = useState(false);
   const [step,          setStep]          = useState<Step>('pick_type');
   const [serviceType,   setServiceType]   = useState<ServiceType>('room');
-  const [items,         setItems]         = useState<ServiceItem[]>([]);
+  const [items,         setItems]         = useState<any[]>([]);
   const [itemsLoading,  setItemsLoading]  = useState(false);
   const [selectedItem,  setSelectedItem]  = useState<ServiceItem | null>(null);
   const [checkIn,       setCheckIn]       = useState('');
@@ -530,6 +596,7 @@ const BookingsScreen: FC = () => {
   const [calVisible,    setCalVisible]    = useState(false);
   const [calMode,       setCalMode]       = useState<'single' | 'range'>('single');
   const [calTitle,      setCalTitle]      = useState('');
+  const [calContext,    setCalContext]     = useState<'booking' | 'reschedule'>('booking');
 
   // Payment modal
   const [payModal,       setPayModal]       = useState(false);
@@ -539,6 +606,26 @@ const BookingsScreen: FC = () => {
   const [payRef,         setPayRef]         = useState('');
   const [payNotes,       setPayNotes]       = useState('');
   const [paying,         setPaying]         = useState(false);
+
+  // Share Experience modal
+  const [shareModal,           setShareModal]           = useState(false);
+  const [shareReservation,     setShareReservation]     = useState<Reservation | null>(null);
+  const [shareRating,          setShareRating]          = useState(5);
+  const [shareCaption,         setShareCaption]         = useState('');
+  const [shareImage,           setShareImage]           = useState('');
+  const [shareFromGallery,     setShareFromGallery]     = useState(false);
+  const [shareGalleryMeta,     setShareGalleryMeta]     = useState<{ fileName: string; mimeType: string } | null>(null);
+  const [shareSubmitting,      setShareSubmitting]      = useState(false);
+  // Success modal
+  const [successConfig, setSuccessConfig] = useState<SuccessModalConfig | null>(null);
+
+  // Reschedule modal
+  const [rescheduleModal,       setRescheduleModal]       = useState(false);
+  const [rescheduleReservation, setRescheduleReservation] = useState<Reservation | null>(null);
+  const [rescheduleCheckIn,     setRescheduleCheckIn]     = useState('');
+  const [rescheduleCheckOut,    setRescheduleCheckOut]    = useState('');
+  const [rescheduleTourDate,    setRescheduleTourDate]    = useState('');
+  const [rescheduling,          setRescheduling]          = useState(false);
 
   // ─── Preselect from ServiceDetailScreen ──────────────────────────────────
 
@@ -556,6 +643,21 @@ const BookingsScreen: FC = () => {
     }
   }, [route.params?.preselect]);
 
+  // ─── Rebuild sharedReservationIds from server on mount ───────────────────
+
+  useEffect(() => {
+    if (!token || !userId) return;
+    getMyWallPosts(token)
+      .then((res: any) => {
+        const posts: any[] = res?.posts ?? [];
+        const ids = posts
+          .filter((p: any) => p.reservationId != null)
+          .map((p: any) => Number(p.reservationId));
+        dispatch(setSharedReservationIds(ids));
+      })
+      .catch(() => {});
+  }, [token, userId, dispatch]);
+
   // ─── Fetch ────────────────────────────────────────────────────────────────
 
   const fetchReservations = useCallback(async () => {
@@ -569,13 +671,32 @@ const BookingsScreen: FC = () => {
       const members = pick(resRes);
       const pays    = pick(payRes);
       console.log('[Bookings] reservations:', members.length, 'payments:', pays.length);
+
+      // Dispatch in-app notification for any status changes since last fetch
+      if (prevReservationsRef.current.length > 0) {
+        members.forEach((newRes: any) => {
+          const old = prevReservationsRef.current.find(r => r.id === newRes.id);
+          if (old && old.status !== newRes.status) {
+            dispatch(addNotification({
+              id:        `status-${newRes.id}-${newRes.status}`,
+              title:     'Booking Status Updated',
+              body:      `Your ${newRes.serviceType || 'reservation'} booking is now ${(newRes.status || '').toLowerCase()}.`,
+              type:      'booking',
+              read:      false,
+              createdAt: new Date().toISOString(),
+            }));
+          }
+        });
+      }
+      prevReservationsRef.current = members;
+
       setReservations(members);
       setPayments(pays);
     } catch (e: any) {
       console.error('[Bookings] fetch error:', e.message);
       setReservations([]);
     }
-  }, [token]);
+  }, [token, dispatch]);
 
   useEffect(() => {
     setLoading(true);
@@ -597,23 +718,61 @@ const BookingsScreen: FC = () => {
 
   // ─── Stats ────────────────────────────────────────────────────────────────
 
-  const stats = useMemo(() => ({
-    total:     reservations.length,
-    pending:   reservations.filter(r => r.status?.toUpperCase() === 'PENDING').length,
-    confirmed: reservations.filter(r => r.status?.toUpperCase() === 'CONFIRMED').length,
-    completed: reservations.filter(r => r.status?.toUpperCase() === 'COMPLETED').length,
-    cancelled: reservations.filter(r => r.status?.toUpperCase() === 'CANCELLED').length,
-  }), [reservations]);
+  const isRescheduledItem = useCallback((r: Reservation) =>
+    r.status?.toUpperCase() === 'RESCHEDULED' || rescheduledReservationIds.includes(r.id),
+  [rescheduledReservationIds]);
 
-  const filtered = useMemo(() =>
-    activeFilter === 'ALL'
-      ? reservations
-      : reservations.filter(r => r.status?.toUpperCase() === activeFilter),
-  [reservations, activeFilter]);
+  // A reservation still needs attention if:
+  // • reservation status is PENDING (admin hasn't approved yet), OR
+  // • payment is UNPAID and the booking isn't done/cancelled, OR
+  // • customer submitted a payment that admin hasn't approved yet
+  const isPendingAction = useCallback((r: Reservation): boolean => {
+    const s = r.status?.toUpperCase();
+    if (s === 'CANCELLED' || s === 'COMPLETED' || isRescheduledItem(r)) return false;
+    if (s === 'PENDING') return true;
+    if (r.paymentStatus?.toUpperCase() === 'UNPAID') return true;
+    const resIRI = `/api/reservations/${r.id}`;
+    const rPays = payments.filter(p => p.reservation === resIRI || p.reservation?.id === r.id);
+    return rPays.some(p => p.status === 'PENDING');
+  }, [payments, isRescheduledItem]);
+
+  const stats = useMemo(() => ({
+    total:       reservations.length,
+    pending:     reservations.filter(r => isPendingAction(r)).length,
+    confirmed:   reservations.filter(r => r.status?.toUpperCase() === 'CONFIRMED' && !isPendingAction(r) && !isRescheduledItem(r)).length,
+    completed:   reservations.filter(r => r.status?.toUpperCase() === 'COMPLETED').length,
+    rescheduled: reservations.filter(r => isRescheduledItem(r)).length,
+    cancelled:   reservations.filter(r => r.status?.toUpperCase() === 'CANCELLED').length,
+  }), [reservations, isPendingAction, isRescheduledItem]);
+
+  const filtered = useMemo(() => {
+    let list: Reservation[];
+    if (activeFilter === 'ALL') {
+      list = [...reservations];
+    } else if (activeFilter === 'RESCHEDULED') {
+      list = reservations.filter(r => isRescheduledItem(r));
+    } else if (activeFilter === 'PENDING') {
+      list = reservations.filter(r => isPendingAction(r));
+    } else if (activeFilter === 'CONFIRMED') {
+      list = reservations.filter(r => r.status?.toUpperCase() === 'CONFIRMED' && !isPendingAction(r) && !isRescheduledItem(r));
+    } else {
+      list = reservations.filter(r => r.status?.toUpperCase() === activeFilter);
+    }
+    return list.sort((a, b) => {
+      const oa = isRescheduledItem(a) ? STATUS_ORDER.RESCHEDULED
+               : isPendingAction(a)   ? STATUS_ORDER.PENDING
+               : (STATUS_ORDER[a.status?.toUpperCase()] ?? 99);
+      const ob = isRescheduledItem(b) ? STATUS_ORDER.RESCHEDULED
+               : isPendingAction(b)   ? STATUS_ORDER.PENDING
+               : (STATUS_ORDER[b.status?.toUpperCase()] ?? 99);
+      return oa - ob;
+    });
+  }, [reservations, activeFilter, isPendingAction, isRescheduledItem]);
 
   // ─── Booking modal helpers ────────────────────────────────────────────────
 
   const openCalendar = (mode: 'single' | 'range', title: string) => {
+    setCalContext('booking');
     setCalMode(mode);
     setCalTitle(title);
     setCalVisible(true);
@@ -634,7 +793,12 @@ const BookingsScreen: FC = () => {
       else if (type === 'tour')    res = await getTours(token);
       else if (type === 'spa')     res = await getSpaServices(token);
       else                         res = await getPackages(token);
-      setItems(res?.data ?? res?.['hydra:member'] ?? []);
+      const raw: any[] = res?.['hydra:member'] ?? res?.member ?? res?.data ?? (Array.isArray(res) ? res : []);
+      setItems(raw.map(r => ({
+        ...r,
+        name:  r.name || r.roomNumber || r.title || `Item ${r.id}`,
+        price: Number(r.pricePerNight || r.packagePrice || r.price || 0),
+      })));
     } catch { setItems([]); }
     finally { setItemsLoading(false); }
   };
@@ -676,12 +840,172 @@ const BookingsScreen: FC = () => {
         payload.checkOutDate = checkOut;
       }
       await createReservation(payload, token);
+      dispatch(addNotification({
+        id:        `booking-${Date.now()}`,
+        title:     'Booking Submitted!',
+        body:      `Your ${serviceType} reservation is pending confirmation. We'll notify you when it's reviewed.`,
+        type:      'booking',
+        read:      false,
+        createdAt: new Date().toISOString(),
+      }));
       setModalOpen(false);
-      Alert.alert('Booking submitted!', 'Your reservation is pending confirmation.');
+      setSuccessConfig({
+        icon:           'calendar-check',
+        iconBg:         '#e8f5e9',
+        iconColor:      '#2e7d32',
+        title:          'Booking Submitted!',
+        message:        `Your ${serviceType} reservation is pending confirmation. We'll notify you as soon as it's reviewed.`,
+        primaryLabel:   'View My Bookings',
+        onPrimary:      () => setSuccessConfig(null),
+        secondaryLabel: 'Book Another',
+        onSecondary:    () => { setSuccessConfig(null); openBooking(); },
+      });
       fetchReservations();
     } catch (e: any) {
+      if (isAuthError(e)) {
+        dispatch(userLogout());
+        Alert.alert('Session expired', 'Please log in again to continue.');
+        return;
+      }
       Alert.alert('Error', e.message ?? 'Could not submit booking.');
     } finally { setSubmitting(false); }
+  };
+
+  // ─── Share Experience helpers ─────────────────────────────────────────────
+
+  const PHOTO_SEEDS = ['baroro-room', 'baroro-tour', 'baroro-spa', 'baroro-dining', 'travel1', 'travel2'];
+
+  const openShare = (reservation: Reservation) => {
+    setShareReservation(reservation);
+    setShareRating(5);
+    setShareCaption('');
+    setShareImage('');
+    setShareFromGallery(false);
+    setShareGalleryMeta(null);
+    setShareModal(true);
+  };
+
+  const pickGalleryForShare = async () => {
+    if (Platform.OS === 'android') {
+      try {
+        const sdkVersion = Platform.Version as number;
+        const permission = sdkVersion >= 33
+          ? PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES
+          : PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE;
+        const result = await PermissionsAndroid.request(permission, {
+          title: 'Photo Library Access',
+          message: 'Allow Baroro to access your photos to share with your review.',
+          buttonPositive: 'Allow',
+          buttonNegative: 'Cancel',
+        });
+        if (result !== PermissionsAndroid.RESULTS.GRANTED) {
+          Alert.alert('Permission needed', 'Please allow photo access in Settings.');
+          return;
+        }
+      } catch (_) { /* let picker handle it */ }
+    }
+    try {
+      const response = await launchImageLibrary({ mediaType: 'photo', quality: 0.8, selectionLimit: 1 });
+      if (response.didCancel || response.errorCode) return;
+      const asset = response.assets?.[0];
+      if (asset?.uri) {
+        setShareImage(asset.uri);
+        setShareFromGallery(true);
+        setShareGalleryMeta({
+          fileName: asset.fileName ?? `photo_${Date.now()}.jpg`,
+          mimeType: asset.type     ?? 'image/jpeg',
+        });
+      }
+    } catch (err: any) {
+      Alert.alert('Could not open gallery', err?.message ?? 'Rebuild the app and try again.');
+    }
+  };
+
+  const submitShare = async () => {
+    if (!shareReservation || !shareCaption.trim()) {
+      Alert.alert('Write something', 'Please share your experience before posting.');
+      return;
+    }
+    setShareSubmitting(true);
+    try {
+      let imageUri: string | undefined = shareImage || undefined;
+      if (shareFromGallery && imageUri) {
+        imageUri = await uploadWallImage(
+          imageUri,
+          token,
+          shareGalleryMeta?.fileName,
+          shareGalleryMeta?.mimeType,
+        );
+      }
+      await createWallPost(
+        {
+          caption:       shareCaption.trim(),
+          imageUri,
+          serviceTag:    shareReservation.serviceType,
+          reservationId: shareReservation.id,
+        },
+        token,
+      );
+      dispatch(markReservationShared(shareReservation.id));
+      setShareModal(false);
+      setSuccessConfig({
+        icon:         'star-circle',
+        iconBg:       '#fff8e1',
+        iconColor:    '#f57f17',
+        title:        'Experience Shared!',
+        message:      'Your review is now live on the Community Wall. Thank you for sharing your moment!',
+        primaryLabel: 'Awesome!',
+        onPrimary:    () => setSuccessConfig(null),
+      });
+    } catch (err: any) {
+      Alert.alert('Error', err.message || 'Could not post your experience. Try again.');
+    } finally {
+      setShareSubmitting(false);
+    }
+  };
+
+  // ─── Reschedule helpers ───────────────────────────────────────────────────
+
+  const openReschedule = (reservation: Reservation) => {
+    setRescheduleReservation(reservation);
+    setRescheduleCheckIn(reservation.checkInDate ?? '');
+    setRescheduleCheckOut(reservation.checkOutDate ?? '');
+    setRescheduleTourDate(reservation.tourDate ?? '');
+    setRescheduleModal(true);
+  };
+
+  const submitReschedule = async () => {
+    if (!rescheduleReservation) return;
+    const isTour = rescheduleReservation.serviceType === 'tour';
+    if (isTour && !rescheduleTourDate) {
+      Alert.alert('Missing date', 'Please pick a new tour date.'); return;
+    }
+    if (!isTour && (!rescheduleCheckIn || !rescheduleCheckOut)) {
+      Alert.alert('Missing dates', 'Please pick both check-in and check-out dates.'); return;
+    }
+    setRescheduling(true);
+    try {
+      const payload = isTour
+        ? { tourDate: rescheduleTourDate, status: 'RESCHEDULED' }
+        : { checkInDate: rescheduleCheckIn, checkOutDate: rescheduleCheckOut, status: 'RESCHEDULED' };
+      await apiReschedule(rescheduleReservation.id, payload, token);
+      dispatch(markReservationRescheduled(rescheduleReservation.id));
+      setRescheduleModal(false);
+      setSuccessConfig({
+        icon:         'calendar-clock',
+        iconBg:       '#ede7f6',
+        iconColor:    '#6a1b9a',
+        title:        'Reschedule Requested',
+        message:      'Your new dates have been submitted for review. We\'ll confirm your updated schedule shortly.',
+        primaryLabel: 'Got It',
+        onPrimary:    () => setSuccessConfig(null),
+      });
+      fetchReservations();
+    } catch (e: any) {
+      Alert.alert('Error', e.message ?? 'Could not reschedule. Please try again.');
+    } finally {
+      setRescheduling(false);
+    }
   };
 
   // ─── Payment helpers ──────────────────────────────────────────────────────
@@ -717,9 +1041,22 @@ const BookingsScreen: FC = () => {
       if (userId > 0) paymentPayload.paidBy = `/api/users/${userId}`;
       await submitPayment(paymentPayload, token);
       setPayModal(false);
-      Alert.alert('Payment submitted!', 'Your payment is pending admin approval.');
+      setSuccessConfig({
+        icon:         'credit-card-check-outline',
+        iconBg:       '#e3f2fd',
+        iconColor:    '#1565c0',
+        title:        'Payment Sent!',
+        message:      'Your payment is under review. We\'ll notify you once it\'s approved by our team.',
+        primaryLabel: 'Got It',
+        onPrimary:    () => setSuccessConfig(null),
+      });
       fetchReservations();
     } catch (e: any) {
+      if (isAuthError(e)) {
+        dispatch(userLogout());
+        Alert.alert('Session expired', 'Please log in again to continue.');
+        return;
+      }
       Alert.alert('Error', e.message ?? 'Could not submit payment.');
     } finally { setPaying(false); }
   };
@@ -742,42 +1079,17 @@ const BookingsScreen: FC = () => {
         </TouchableOpacity>
       </View>
 
-      {/* ── Stats Row ── */}
-      <View style={styles.statsRow}>
-        <StatCard label="Total"     count={stats.total}     color="#455a64" icon="calendar-multiple"     active={activeFilter === 'ALL'}       onPress={() => setActiveFilter('ALL')} />
-        <StatCard label="Pending"   count={stats.pending}   color="#f57f17" icon="clock-outline"         active={activeFilter === 'PENDING'}   onPress={() => setActiveFilter('PENDING')} />
-        <StatCard label="Confirmed" count={stats.confirmed} color="#2e7d32" icon="check-circle-outline"  active={activeFilter === 'CONFIRMED'} onPress={() => setActiveFilter('CONFIRMED')} />
-        <StatCard label="Done"      count={stats.completed} color="#1565c0" icon="flag-checkered"        active={activeFilter === 'COMPLETED'} onPress={() => setActiveFilter('COMPLETED')} />
-        <StatCard label="Cancelled" count={stats.cancelled} color="#c62828" icon="close-circle-outline"  active={activeFilter === 'CANCELLED'} onPress={() => setActiveFilter('CANCELLED')} />
+      {/* ── Filter Pills ── */}
+      <View style={styles.filterBar}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
+          <StatCard label="All"          count={stats.total}       color="#455a64" icon="calendar-multiple"    active={activeFilter === 'ALL'}         onPress={() => setActiveFilter('ALL')} />
+          <StatCard label="Pending"      count={stats.pending}     color="#f57f17" icon="clock-outline"        active={activeFilter === 'PENDING'}     onPress={() => setActiveFilter('PENDING')} />
+          <StatCard label="Confirmed"    count={stats.confirmed}   color="#2e7d32" icon="check-circle-outline" active={activeFilter === 'CONFIRMED'}   onPress={() => setActiveFilter('CONFIRMED')} />
+          <StatCard label="Done"         count={stats.completed}   color="#1565c0" icon="flag-checkered"       active={activeFilter === 'COMPLETED'}   onPress={() => setActiveFilter('COMPLETED')} />
+          <StatCard label="Rescheduled"  count={stats.rescheduled} color="#6a1b9a" icon="calendar-clock"       active={activeFilter === 'RESCHEDULED'} onPress={() => setActiveFilter('RESCHEDULED')} />
+          <StatCard label="Cancelled"    count={stats.cancelled}   color="#c62828" icon="close-circle-outline" active={activeFilter === 'CANCELLED'}   onPress={() => setActiveFilter('CANCELLED')} />
+        </ScrollView>
       </View>
-
-      {/* ── Filter Tabs ── */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.tabsWrap}
-        contentContainerStyle={styles.tabsContent}
-      >
-        {STATUS_FILTERS.map(f => (
-          <TouchableOpacity
-            key={f.key}
-            style={[styles.tab, activeFilter === f.key && styles.tabActive]}
-            onPress={() => setActiveFilter(f.key)}
-            activeOpacity={0.75}
-          >
-            <Text style={[styles.tabText, activeFilter === f.key && styles.tabTextActive]}>{f.label}</Text>
-            {f.key !== 'ALL' && (
-              <View style={[styles.tabCount, activeFilter === f.key && styles.tabCountActive]}>
-                <Text style={[styles.tabCountText, activeFilter === f.key && styles.tabCountTextActive]}>
-                  {f.key === 'PENDING'   ? stats.pending   :
-                   f.key === 'CONFIRMED' ? stats.confirmed :
-                   f.key === 'COMPLETED' ? stats.completed : stats.cancelled}
-                </Text>
-              </View>
-            )}
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
 
       {/* ── List ── */}
       {loading ? (
@@ -789,7 +1101,7 @@ const BookingsScreen: FC = () => {
           contentContainerStyle={styles.list}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />}
           ListEmptyComponent={<EmptyState filter={activeFilter} onBook={openBooking} />}
-          renderItem={({ item }) => <ReservationCard item={item} onPay={openPayment} payments={payments} />}
+          renderItem={({ item }) => <ReservationCard item={item} onPay={openPayment} onShare={openShare} onReschedule={openReschedule} payments={payments} isShared={sharedReservationIds.includes(item.id)} isRescheduled={isRescheduledItem(item)} />}
         />
       )}
 
@@ -798,17 +1110,17 @@ const BookingsScreen: FC = () => {
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.modalContainer}>
             <View style={styles.modalHeader}>
-              <TouchableOpacity onPress={() =>
+              <TouchableOpacity style={styles.modalIconBtn} onPress={() =>
                 step === 'pick_type' ? setModalOpen(false) :
                 setStep(step === 'fill_form' ? 'pick_item' : 'pick_type')
               }>
-                <Text style={styles.modalBack}>{step === 'pick_type' ? '✕ Close' : '← Back'}</Text>
+                <Icon name={step === 'pick_type' ? 'close' : 'arrow-left'} size={20} color={COLORS.textDark} />
               </TouchableOpacity>
               <Text style={styles.modalTitle}>
                 {step === 'pick_type' ? 'What to book?' :
                  step === 'pick_item' ? `Pick a ${serviceType}` : 'Booking details'}
               </Text>
-              <View style={{ width: 60 }} />
+              <View style={{ width: 40 }} />
             </View>
 
             {step === 'pick_type' && (
@@ -838,16 +1150,106 @@ const BookingsScreen: FC = () => {
                 ? <ActivityIndicator color={COLORS.primary} style={{ marginTop: 40 }} size="large" />
                 : items.length === 0
                   ? <Text style={styles.noItems}>No {serviceType}s available right now.</Text>
-                  : <ScrollView contentContainerStyle={styles.itemList}>
-                      {items.map(item => (
-                        <TouchableOpacity key={item.id} style={styles.itemRow} onPress={() => selectItem(item)} activeOpacity={0.8}>
-                          <View style={{ flex: 1 }}>
-                            <Text style={styles.itemName}>{item.name}</Text>
+                  : <ScrollView contentContainerStyle={styles.itemCardList}>
+                      {items.map(item => {
+                        const imgSeed = `${serviceType}${item.id}`;
+                        const imgUri  = resolveImg(item.mainImage || item.image || item.imageUrl, imgSeed, serviceType);
+                        const priceLabel = serviceType === 'room'
+                          ? `₱${Number(item.price).toLocaleString()}/night`
+                          : `₱${Number(item.price).toLocaleString()}`;
+                        const capacityLabel = item.capacity ? `Up to ${item.capacity} guests` : null;
+                        const durationLabel = item.duration ?? null;
+                        const locationLabel = item.location ?? null;
+                        const pkgType       = item.packageType ?? null;
+                        const discount      = item.discountPercentage ?? null;
+                        const rawFeatures: string | null = item.features ?? null;
+                        const featureChips = rawFeatures
+                          ? rawFeatures.split(',').map((s: string) => s.trim()).filter(Boolean).slice(0, 3)
+                          : [];
+
+                        return (
+                          <View key={item.id} style={styles.itemCard}>
+                            {/* ── Image ── */}
+                            <Image
+                              source={{ uri: imgUri }}
+                              style={styles.itemCardImage}
+                              resizeMode="cover"
+                            />
+
+                            {/* ── Price badge ── */}
+                            <View style={styles.itemCardPriceBadge}>
+                              <Text style={styles.itemCardPriceText}>{priceLabel}</Text>
+                            </View>
+
+                            {/* ── Discount badge ── */}
+                            {discount ? (
+                              <View style={styles.itemCardDiscountBadge}>
+                                <Text style={styles.itemCardDiscountText}>{discount}% OFF</Text>
+                              </View>
+                            ) : null}
+
+                            {/* ── Content ── */}
+                            <View style={styles.itemCardContent}>
+                              <Text style={styles.itemCardName}>{item.name}</Text>
+
+                              {/* Key attributes */}
+                              <View style={styles.itemCardAttrs}>
+                                {capacityLabel ? (
+                                  <View style={styles.itemCardAttr}>
+                                    <Icon name="account-group-outline" size={12} color={COLORS.textMuted} />
+                                    <Text style={styles.itemCardAttrText}>{capacityLabel}</Text>
+                                  </View>
+                                ) : null}
+                                {durationLabel ? (
+                                  <View style={styles.itemCardAttr}>
+                                    <Icon name="clock-outline" size={12} color={COLORS.textMuted} />
+                                    <Text style={styles.itemCardAttrText}>{durationLabel}</Text>
+                                  </View>
+                                ) : null}
+                                {locationLabel ? (
+                                  <View style={styles.itemCardAttr}>
+                                    <Icon name="map-marker-outline" size={12} color={COLORS.textMuted} />
+                                    <Text style={styles.itemCardAttrText}>{locationLabel}</Text>
+                                  </View>
+                                ) : null}
+                                {pkgType ? (
+                                  <View style={styles.itemCardAttr}>
+                                    <Icon name="tag-outline" size={12} color={COLORS.textMuted} />
+                                    <Text style={styles.itemCardAttrText}>{pkgType}</Text>
+                                  </View>
+                                ) : null}
+                              </View>
+
+                              {/* Description */}
+                              {item.description ? (
+                                <Text style={styles.itemCardDesc} numberOfLines={2}>{item.description}</Text>
+                              ) : null}
+
+                              {/* Feature chips (rooms) */}
+                              {featureChips.length > 0 ? (
+                                <View style={styles.itemCardChips}>
+                                  {featureChips.map((f: string) => (
+                                    <View key={f} style={styles.itemCardChip}>
+                                      <Icon name="check-circle-outline" size={10} color={COLORS.primary} />
+                                      <Text style={styles.itemCardChipText}>{f}</Text>
+                                    </View>
+                                  ))}
+                                </View>
+                              ) : null}
+
+                              {/* Select button */}
+                              <TouchableOpacity
+                                style={styles.itemCardSelectBtn}
+                                onPress={() => selectItem(item)}
+                                activeOpacity={0.85}
+                              >
+                                <Icon name="calendar-check" size={16} color="#fff" />
+                                <Text style={styles.itemCardSelectText}>Select & Book</Text>
+                              </TouchableOpacity>
+                            </View>
                           </View>
-                          <Text style={styles.itemPrice}>₱{Number(item.price).toLocaleString()}</Text>
-                          <Icon name="chevron-right" size={20} color={COLORS.textMuted} />
-                        </TouchableOpacity>
-                      ))}
+                        );
+                      })}
                     </ScrollView>
             )}
 
@@ -912,11 +1314,17 @@ const BookingsScreen: FC = () => {
         visible={calVisible}
         mode={calMode}
         title={calTitle}
-        value={tourDate}
-        startDate={checkIn}
-        endDate={checkOut}
-        onSelect={date => setTourDate(date)}
-        onRangeSelect={(start, end) => { setCheckIn(start); setCheckOut(end); }}
+        value={calContext === 'reschedule' ? rescheduleTourDate : tourDate}
+        startDate={calContext === 'reschedule' ? rescheduleCheckIn : checkIn}
+        endDate={calContext === 'reschedule' ? rescheduleCheckOut : checkOut}
+        onSelect={date => {
+          if (calContext === 'reschedule') setRescheduleTourDate(date);
+          else setTourDate(date);
+        }}
+        onRangeSelect={(start, end) => {
+          if (calContext === 'reschedule') { setRescheduleCheckIn(start); setRescheduleCheckOut(end); }
+          else { setCheckIn(start); setCheckOut(end); }
+        }}
         onClose={() => setCalVisible(false)}
       />
 
@@ -925,11 +1333,11 @@ const BookingsScreen: FC = () => {
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.modalContainer}>
             <View style={styles.modalHeader}>
-              <TouchableOpacity onPress={() => setPayModal(false)}>
-                <Text style={styles.modalBack}>✕ Close</Text>
+              <TouchableOpacity style={styles.modalIconBtn} onPress={() => setPayModal(false)}>
+                <Icon name="close" size={20} color={COLORS.textDark} />
               </TouchableOpacity>
               <Text style={styles.modalTitle}>Submit Payment</Text>
-              <View style={{ width: 60 }} />
+              <View style={{ width: 40 }} />
             </View>
 
             <ScrollView contentContainerStyle={styles.form} keyboardShouldPersistTaps="handled">
@@ -1014,6 +1422,200 @@ const BookingsScreen: FC = () => {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* ── Reschedule Modal ── */}
+      <Modal visible={rescheduleModal} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setRescheduleModal(false)}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <TouchableOpacity style={styles.modalIconBtn} onPress={() => setRescheduleModal(false)}>
+                <Icon name="close" size={20} color={COLORS.textDark} />
+              </TouchableOpacity>
+              <Text style={styles.modalTitle}>Reschedule</Text>
+              <View style={{ width: 40 }} />
+            </View>
+
+            <ScrollView contentContainerStyle={styles.form} keyboardShouldPersistTaps="handled">
+              {rescheduleReservation && (
+                <View style={styles.selectedInfo}>
+                  <Text style={styles.selectedLabel}>{rescheduleReservation.serviceType} — {rescheduleReservation.status}</Text>
+                  <Text style={styles.selectedName}>#{rescheduleReservation.reservationCode ?? rescheduleReservation.id}</Text>
+                </View>
+              )}
+
+              {rescheduleReservation?.serviceType === 'tour' ? (
+                <>
+                  <DateField
+                    label="New Tour Date *"
+                    value={rescheduleTourDate}
+                    placeholder="Tap to pick a new date"
+                    icon="calendar-month"
+                    isSingle
+                    onPress={() => {
+                      setCalContext('reschedule');
+                      setCalMode('single');
+                      setCalTitle('Select New Tour Date');
+                      setCalVisible(true);
+                    }}
+                  />
+                </>
+              ) : (
+                <DateField
+                  label="New Check-in & Check-out *"
+                  value={rescheduleCheckIn && rescheduleCheckOut
+                    ? `${new Date(rescheduleCheckIn).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}  →  ${new Date(rescheduleCheckOut).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })}`
+                    : rescheduleCheckIn
+                      ? `${new Date(rescheduleCheckIn).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })} → pick check-out`
+                      : ''}
+                  placeholder="Tap to pick new dates"
+                  icon="calendar-range"
+                  onPress={() => {
+                    setCalContext('reschedule');
+                    setCalMode('range');
+                    setCalTitle('Select New Stay Dates');
+                    setCalVisible(true);
+                  }}
+                />
+              )}
+
+              <View style={styles.rescheduleNote}>
+                <Icon name="information-outline" size={14} color={COLORS.info} />
+                <Text style={styles.rescheduleNoteText}>
+                  Your request will be reviewed by the admin. You'll be notified once confirmed.
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                style={[styles.submitBtn, rescheduling && { opacity: 0.6 }]}
+                onPress={submitReschedule}
+                disabled={rescheduling}
+                activeOpacity={0.85}
+              >
+                {rescheduling
+                  ? <ActivityIndicator color="#fff" size="small" />
+                  : <><Icon name="calendar-check" size={18} color="#fff" /><Text style={styles.submitText}>Request Reschedule</Text></>}
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* ── Success Modal ── */}
+      <SuccessModal config={successConfig} />
+
+      {/* ── Share Experience Modal ── */}
+      <Modal visible={shareModal} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShareModal(false)}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <TouchableOpacity style={styles.modalIconBtn} onPress={() => setShareModal(false)}>
+                <Icon name="close" size={20} color={COLORS.textDark} />
+              </TouchableOpacity>
+              <Text style={styles.modalTitle}>Share Your Experience</Text>
+              <View style={{ width: 40 }} />
+            </View>
+
+            <ScrollView contentContainerStyle={styles.form} keyboardShouldPersistTaps="handled">
+              {/* Service tag */}
+              {shareReservation && (
+                <View style={styles.selectedInfo}>
+                  <Text style={styles.selectedLabel}>{shareReservation.serviceType} — Completed Stay</Text>
+                  <Text style={styles.selectedName}>#{shareReservation.reservationCode ?? shareReservation.id}</Text>
+                </View>
+              )}
+
+              {/* Star rating */}
+              <Text style={styles.fieldLabel}>Your Rating *</Text>
+              <View style={styles.starsRow}>
+                {[1, 2, 3, 4, 5].map(star => (
+                  <TouchableOpacity key={star} onPress={() => setShareRating(star)} activeOpacity={0.7}>
+                    <Icon
+                      name={star <= shareRating ? 'star' : 'star-outline'}
+                      size={36}
+                      color={star <= shareRating ? '#f57f17' : COLORS.border}
+                    />
+                  </TouchableOpacity>
+                ))}
+                <Text style={styles.ratingLabel}>
+                  {shareRating === 5 ? 'Excellent!' : shareRating === 4 ? 'Very Good' : shareRating === 3 ? 'Good' : shareRating === 2 ? 'Fair' : 'Poor'}
+                </Text>
+              </View>
+
+              {/* Caption */}
+              <Text style={styles.fieldLabel}>Your Review *</Text>
+              <TextInput
+                style={[styles.input, styles.textArea, { height: 110 }]}
+                value={shareCaption}
+                onChangeText={t => setShareCaption(t.slice(0, 500))}
+                multiline
+                placeholder="Share your experience — what did you love? Any tips for future guests?"
+                placeholderTextColor={COLORS.textMuted}
+              />
+              <Text style={styles.charCount}>{shareCaption.length}/500</Text>
+
+              {/* Photo picker */}
+              <Text style={styles.fieldLabel}>Add a Photo (optional)</Text>
+
+              {/* Gallery button */}
+              <TouchableOpacity style={styles.galleryPickerBtn} onPress={pickGalleryForShare} activeOpacity={0.8}>
+                <Icon name="image-plus" size={20} color={COLORS.primary} />
+                <Text style={styles.galleryPickerText}>
+                  {shareFromGallery ? 'Change Photo from Gallery' : 'Choose from Gallery'}
+                </Text>
+              </TouchableOpacity>
+
+              {/* Large preview if gallery photo selected */}
+              {shareFromGallery && shareImage ? (
+                <View style={styles.galleryPreviewWrap}>
+                  <Image source={{ uri: shareImage }} style={styles.galleryPreviewImg} resizeMode="cover" />
+                  <TouchableOpacity
+                    style={styles.galleryPreviewRemove}
+                    onPress={() => { setShareImage(''); setShareFromGallery(false); }}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Icon name="close-circle" size={26} color="#fff" />
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <>
+                  <Text style={styles.galleryOrLabel}>or pick a preset</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: SPACING.sm }}>
+                    <View style={styles.photoPickerRow}>
+                      {PHOTO_SEEDS.map(seed => {
+                        const uri = `https://picsum.photos/seed/${seed}/400/240`;
+                        return (
+                          <TouchableOpacity
+                            key={seed}
+                            style={[styles.photoThumb, shareImage === uri && styles.photoThumbActive]}
+                            onPress={() => setShareImage(shareImage === uri ? '' : uri)}
+                            activeOpacity={0.8}
+                          >
+                            <Icon name="image-outline" size={20} color={shareImage === uri ? COLORS.primary : COLORS.textMuted} />
+                            <Text style={[styles.photoSeedLabel, shareImage === uri && { color: COLORS.primary }]}>
+                              {seed.replace('baroro-', '').replace('travel', 'Travel ')}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </ScrollView>
+                </>
+              )}
+
+              <TouchableOpacity
+                style={[styles.submitBtn, (!shareCaption.trim() || shareSubmitting) && { opacity: 0.5 }]}
+                onPress={submitShare}
+                disabled={!shareCaption.trim() || shareSubmitting}
+                activeOpacity={0.85}
+              >
+                {shareSubmitting
+                  ? <ActivityIndicator color="#fff" size="small" />
+                  : <><Icon name="share-variant" size={18} color="#fff" /><Text style={styles.submitText}>Post to Community Wall</Text></>}
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 };
@@ -1039,24 +1641,16 @@ const styles = StyleSheet.create({
   bookBtn:     { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm, borderRadius: RADIUS.full, borderWidth: 1, borderColor: 'rgba(255,255,255,0.35)' },
   bookBtnText: { color: '#fff', fontFamily: FONTS.bold, fontSize: 13, fontWeight: '700' },
 
-  // Stats
-  statsRow: { flexDirection: 'row', paddingHorizontal: SPACING.md, paddingVertical: SPACING.md, gap: SPACING.xs },
-  statCard: { flex: 1, backgroundColor: COLORS.surface, borderRadius: RADIUS.md, padding: SPACING.sm, alignItems: 'center', gap: 4, ...SHADOW.sm, borderWidth: 1.5, borderColor: 'transparent' },
-  statIconWrap: { width: 32, height: 32, borderRadius: RADIUS.md, alignItems: 'center', justifyContent: 'center' },
-  statCount: { fontSize: 18, fontFamily: FONTS.display, fontWeight: '700' },
-  statLabel: { fontSize: 9, fontFamily: FONTS.bold, fontWeight: '600', color: COLORS.textMuted, textAlign: 'center' },
-
-  // Filter tabs
-  tabsWrap:    { backgroundColor: COLORS.surface, borderBottomWidth: 1, borderBottomColor: COLORS.border, maxHeight: 48 },
-  tabsContent: { paddingHorizontal: SPACING.md, alignItems: 'center', gap: SPACING.xs },
-  tab:         { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: RADIUS.full, gap: 5 },
-  tabActive:   { backgroundColor: COLORS.primary },
-  tabText:     { fontSize: 12, fontFamily: FONTS.bold, fontWeight: '600', color: COLORS.textMuted },
-  tabTextActive: { color: '#fff' },
-  tabCount:    { backgroundColor: COLORS.surfaceAlt, borderRadius: RADIUS.full, paddingHorizontal: 6, paddingVertical: 1, minWidth: 18, alignItems: 'center' },
-  tabCountActive: { backgroundColor: 'rgba(255,255,255,0.25)' },
-  tabCountText: { fontSize: 10, fontFamily: FONTS.bold, fontWeight: '700', color: COLORS.textMuted },
-  tabCountTextActive: { color: '#fff' },
+  // Filter pills (matches Share Wall filter bar design)
+  filterBar:           { backgroundColor: COLORS.surface, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  filterScroll:        { paddingHorizontal: SPACING.md, gap: 8 },
+  filterPill:          { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 13, paddingVertical: 7, borderRadius: RADIUS.full, backgroundColor: COLORS.surfaceAlt, borderWidth: 1, borderColor: COLORS.border },
+  filterPillActive:    { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+  filterPillText:      { fontSize: 12, fontFamily: FONTS.bold, fontWeight: '600', color: COLORS.textMuted },
+  filterPillTextActive:{ color: '#fff' },
+  filterPillBadge:     { backgroundColor: COLORS.primary, borderRadius: RADIUS.full, paddingHorizontal: 5, paddingVertical: 1, minWidth: 16, alignItems: 'center' },
+  filterPillBadgeActive:{ backgroundColor: 'rgba(255,255,255,0.3)' },
+  filterPillBadgeText: { fontSize: 9, fontFamily: FONTS.bold, fontWeight: '700', color: '#fff' },
 
   // List
   list: { padding: SPACING.md, paddingBottom: 110 },
@@ -1083,6 +1677,16 @@ const styles = StyleSheet.create({
   cardAmount:   { fontSize: 16, fontFamily: FONTS.bold, fontWeight: '700', color: COLORS.textDark },
   payNowBtn:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: COLORS.primary, borderRadius: RADIUS.full, paddingVertical: SPACING.sm, marginTop: SPACING.sm, ...SHADOW.brand },
   payNowText:   { color: '#fff', fontFamily: FONTS.bold, fontSize: 13, fontWeight: '700' },
+  shareExpBtn:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderRadius: RADIUS.full, paddingVertical: SPACING.sm, marginTop: SPACING.xs, borderWidth: 1.5, borderColor: COLORS.primary, backgroundColor: COLORS.primaryFaded },
+  shareExpText:  { color: COLORS.primary, fontFamily: FONTS.bold, fontSize: 13, fontWeight: '700' },
+  sharedBadge:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderRadius: RADIUS.full, paddingVertical: SPACING.sm, marginTop: SPACING.xs, backgroundColor: COLORS.success + '15' },
+  sharedBadgeText:{ color: COLORS.success, fontFamily: FONTS.bold, fontSize: 13, fontWeight: '700' },
+  rescheduleBtn:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderRadius: RADIUS.full, paddingVertical: SPACING.sm, marginTop: SPACING.xs, borderWidth: 1.5, borderColor: '#00838f', backgroundColor: '#00838f12' },
+  rescheduleBtnText:  { color: '#00838f', fontFamily: FONTS.bold, fontSize: 13, fontWeight: '700' },
+  rescheduledBanner:  { flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: '#6a1b9a15', borderRadius: RADIUS.sm, paddingHorizontal: 12, paddingVertical: 9, marginTop: SPACING.xs, borderWidth: 1, borderColor: '#6a1b9a30' },
+  rescheduledBannerText: { flex: 1, fontSize: 12, fontFamily: FONTS.bold, fontWeight: '600', color: '#6a1b9a' },
+  rescheduleNote:     { flexDirection: 'row', alignItems: 'flex-start', gap: 8, backgroundColor: COLORS.info + '12', borderRadius: RADIUS.sm, padding: 12, marginTop: SPACING.sm, marginBottom: SPACING.sm },
+  rescheduleNoteText: { flex: 1, fontSize: 12, fontFamily: FONTS.body, color: COLORS.info, lineHeight: 18 },
   rejectionBanner: { flexDirection: 'row', alignItems: 'flex-start', gap: 6, backgroundColor: '#fce4ec', borderRadius: RADIUS.sm, padding: 8, marginTop: SPACING.xs },
   rejectionText: { flex: 1, fontSize: 11, fontFamily: FONTS.body, color: '#c62828', lineHeight: 16 },
 
@@ -1095,9 +1699,19 @@ const styles = StyleSheet.create({
 
   // Modal
   modalContainer: { flex: 1, backgroundColor: COLORS.background },
-  modalHeader:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: SPACING.md, paddingVertical: SPACING.md, backgroundColor: COLORS.surface, borderBottomWidth: 1, borderBottomColor: COLORS.border },
-  modalBack:      { color: COLORS.primary, fontFamily: FONTS.medium, fontSize: 14, width: 70 },
-  modalTitle:     { fontSize: 16, fontFamily: FONTS.bold, color: COLORS.textDark, fontWeight: '700', textAlign: 'center' },
+  modalHeader: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: SPACING.md, paddingTop: 16, paddingBottom: 14,
+    backgroundColor: COLORS.surface,
+    borderBottomWidth: 1, borderBottomColor: COLORS.border,
+  },
+  modalIconBtn: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: COLORS.surfaceAlt,
+    justifyContent: 'center', alignItems: 'center',
+    borderWidth: 1, borderColor: COLORS.border,
+  },
+  modalTitle: { flex: 1, fontSize: 16, fontFamily: FONTS.bold, color: COLORS.textDark, fontWeight: '700', textAlign: 'center' },
 
   // Type picker
   typeGrid: { padding: SPACING.md, gap: SPACING.sm },
@@ -1106,11 +1720,46 @@ const styles = StyleSheet.create({
   typeLabel: { fontSize: 17, fontFamily: FONTS.bold, color: COLORS.textDark, fontWeight: '700' },
   typeSub:   { fontSize: 12, color: COLORS.textMuted, fontFamily: FONTS.body, marginTop: 2 },
 
-  // Item picker
-  itemList:  { padding: SPACING.md },
-  itemRow:   { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.surface, borderRadius: RADIUS.md, padding: SPACING.md, marginBottom: SPACING.sm, ...SHADOW.sm },
-  itemName:  { fontSize: 14, fontFamily: FONTS.medium, color: COLORS.textDark, fontWeight: '600' },
-  itemPrice: { fontSize: 14, fontFamily: FONTS.bold, color: COLORS.primary, fontWeight: '700', marginRight: SPACING.sm },
+  // Item picker cards
+  itemCardList: { padding: SPACING.md, paddingBottom: 40, gap: SPACING.md },
+  itemCard: {
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.xl,
+    overflow: 'hidden',
+    ...SHADOW.md,
+  },
+  itemCardImage: { width: '100%', height: 185 },
+  itemCardPriceBadge: {
+    position: 'absolute', top: 12, right: 12,
+    backgroundColor: COLORS.primary,
+    borderRadius: RADIUS.full,
+    paddingHorizontal: 12, paddingVertical: 5,
+    ...SHADOW.sm,
+  },
+  itemCardPriceText: { color: '#fff', fontSize: 13, fontFamily: FONTS.bold, fontWeight: '700' },
+  itemCardDiscountBadge: {
+    position: 'absolute', top: 12, left: 12,
+    backgroundColor: '#e65100',
+    borderRadius: RADIUS.full,
+    paddingHorizontal: 10, paddingVertical: 4,
+  },
+  itemCardDiscountText: { color: '#fff', fontSize: 11, fontFamily: FONTS.bold, fontWeight: '700' },
+  itemCardContent: { padding: SPACING.md, gap: 8 },
+  itemCardName: { fontSize: 17, fontFamily: FONTS.display, fontWeight: '700', color: COLORS.textDark },
+  itemCardAttrs: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  itemCardAttr: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: COLORS.surfaceAlt, borderRadius: RADIUS.full, paddingHorizontal: 9, paddingVertical: 4 },
+  itemCardAttrText: { fontSize: 11, fontFamily: FONTS.body, color: COLORS.textMuted },
+  itemCardDesc: { fontSize: 13, fontFamily: FONTS.body, color: COLORS.textMuted, lineHeight: 19 },
+  itemCardChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  itemCardChip: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: COLORS.primaryFaded, borderRadius: RADIUS.full, paddingHorizontal: 8, paddingVertical: 3 },
+  itemCardChipText: { fontSize: 10, fontFamily: FONTS.bold, fontWeight: '600', color: COLORS.primary },
+  itemCardSelectBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    backgroundColor: COLORS.primary, borderRadius: RADIUS.full,
+    paddingVertical: 13, marginTop: 4,
+    ...SHADOW.brand,
+  },
+  itemCardSelectText: { color: '#fff', fontSize: 14, fontFamily: FONTS.bold, fontWeight: '700' },
   noItems:   { textAlign: 'center', color: COLORS.textMuted, marginTop: 60, fontFamily: FONTS.body, fontSize: 14 },
 
   // Form
@@ -1122,8 +1771,8 @@ const styles = StyleSheet.create({
   fieldLabel:    { fontSize: 12, fontFamily: FONTS.bold, color: COLORS.textDark, fontWeight: '700', marginBottom: 6, marginTop: SPACING.sm },
   input:         { backgroundColor: COLORS.surface, borderRadius: RADIUS.md, padding: SPACING.md, fontSize: 14, fontFamily: FONTS.body, color: COLORS.textDark, borderWidth: 1, borderColor: COLORS.border, marginBottom: 4 },
   textArea:      { height: 80, textAlignVertical: 'top' },
-  submitBtn:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: COLORS.primary, borderRadius: RADIUS.full, padding: SPACING.md, marginTop: SPACING.lg, ...SHADOW.brand },
-  submitText:    { color: '#fff', fontFamily: FONTS.bold, fontSize: 16, fontWeight: '700' },
+  submitBtn:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, backgroundColor: COLORS.primary, borderRadius: RADIUS.full, paddingVertical: 17, marginTop: SPACING.lg, ...SHADOW.brand },
+  submitText:    { color: '#fff', fontFamily: FONTS.bold, fontSize: 15, fontWeight: '700', letterSpacing: 0.3 },
 
   // Payment method
   methodGrid:       { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm, marginBottom: SPACING.sm },
@@ -1131,6 +1780,26 @@ const styles = StyleSheet.create({
   methodBtnActive:  { borderColor: COLORS.primary, backgroundColor: COLORS.primaryFaded },
   methodText:       { fontSize: 12, fontFamily: FONTS.medium, color: COLORS.textMuted, fontWeight: '600' },
   methodTextActive: { color: COLORS.primary, fontFamily: FONTS.bold, fontWeight: '700' },
+
+  // Share experience
+  starsRow:           { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: SPACING.sm },
+  ratingLabel:        { fontSize: 13, fontFamily: FONTS.bold, color: '#f57f17', fontWeight: '700', marginLeft: 4 },
+  charCount:          { fontSize: 11, color: COLORS.textMuted, textAlign: 'right', marginBottom: SPACING.sm },
+  galleryPickerBtn:   {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: COLORS.primaryFaded,
+    borderWidth: 1.5, borderColor: COLORS.primary + '40', borderStyle: 'dashed',
+    borderRadius: RADIUS.md, paddingVertical: 14, paddingHorizontal: 16, marginBottom: 10,
+  },
+  galleryPickerText:  { fontSize: 14, fontFamily: FONTS.bold, fontWeight: '700', color: COLORS.primary },
+  galleryOrLabel:     { fontSize: 11, fontFamily: FONTS.body, color: COLORS.textMuted, marginBottom: 6 },
+  galleryPreviewWrap: { position: 'relative', borderRadius: RADIUS.md, overflow: 'hidden', marginBottom: SPACING.md },
+  galleryPreviewImg:  { width: '100%', height: 200 },
+  galleryPreviewRemove:{ position: 'absolute', top: 8, right: 8, backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 13 },
+  photoPickerRow:     { flexDirection: 'row', gap: SPACING.sm, paddingVertical: 4 },
+  photoThumb:         { alignItems: 'center', justifyContent: 'center', width: 80, height: 60, borderRadius: RADIUS.md, backgroundColor: COLORS.surfaceAlt, borderWidth: 1.5, borderColor: COLORS.border, gap: 4 },
+  photoThumbActive:   { borderColor: COLORS.primary, backgroundColor: COLORS.primaryFaded },
+  photoSeedLabel:     { fontSize: 9, fontFamily: FONTS.bold, color: COLORS.textMuted, textTransform: 'capitalize', textAlign: 'center' },
 
   // Date picker field
   dateField: {

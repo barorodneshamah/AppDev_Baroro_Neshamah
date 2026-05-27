@@ -1,24 +1,25 @@
 // src/screens/shared/ServicesScreen.tsx
-import React, { FC, useState, useCallback } from 'react';
+import React, { FC, useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
   ActivityIndicator, RefreshControl, Alert, StatusBar, Platform,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { useSelector } from 'react-redux';
 import { useFocusEffect } from '@react-navigation/native';
 import { RootState } from '../../store';
 import {
-  getRooms, getTours, getFoods, getPackages,
-  deleteRoom, deleteTour, deleteFood, deletePackage,
+  getRooms, getTours, getFoods, getPackages, getSpaServices,
+  deleteRoom, deleteTour, deleteFood, deletePackage, deleteSpa,
 } from '../../app/api/api';
 import { COLORS, FONTS, SHADOW, RADIUS } from '../../theme';
 import ROUTES from '../../utils';
+import { ConfirmModal, ConfirmModalConfig } from '../../components/AppModals';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type ServiceType = 'Rooms' | 'Tours' | 'Food' | 'Packages';
+type ServiceType = 'Rooms' | 'Tours' | 'Food' | 'Packages' | 'Spa';
 
 interface Props { canEdit: boolean; accentColor: string; }
 
@@ -27,6 +28,7 @@ const TABS: { key: ServiceType; icon: string }[] = [
   { key: 'Tours',    icon: 'compass' },
   { key: 'Food',     icon: 'food-fork-drink' },
   { key: 'Packages', icon: 'gift' },
+  { key: 'Spa',      icon: 'spa' },
 ];
 
 const STATUS_COLOR: Record<string, string> = {
@@ -36,6 +38,15 @@ const STATUS_COLOR: Record<string, string> = {
   inactive:    COLORS.error,
   maintenance: COLORS.warning,
   booked:      COLORS.warning,
+};
+
+const collectionOf = (response: any): any[] => {
+  if (Array.isArray(response)) return response;
+  if (Array.isArray(response?.['hydra:member'])) return response['hydra:member'];
+  if (Array.isArray(response?.member)) return response.member;
+  if (Array.isArray(response?.data)) return response.data;
+  if (Array.isArray(response?.items)) return response.items;
+  return [];
 };
 
 // ─── Item Card ────────────────────────────────────────────────────────────────
@@ -49,7 +60,8 @@ const ItemCard: FC<{
     type === 'Rooms'    ? `${item.roomType ?? ''} · ₱${item.pricePerNight ?? 0}/night` :
     type === 'Tours'    ? `${item.location ?? ''} · ₱${item.price ?? 0}` :
     type === 'Food'     ? `${item.category ?? ''} · ₱${item.price ?? 0}` :
-    `₱${item.packagePrice ?? 0}  (${item.discountPercentage ?? 0}% off)`;
+    type === 'Packages' ? `₱${item.packagePrice ?? 0}  (${item.discountPercentage ?? 0}% off)` :
+    `${item.duration ?? item.category ?? 'Wellness service'} · ${item.capacity ?? 0} slots · ₱${item.price ?? 0}`;
 
   const statusKey = (item.status ?? '').toLowerCase();
   const statusColor = STATUS_COLOR[statusKey] ?? COLORS.textMuted;
@@ -92,25 +104,33 @@ const ItemCard: FC<{
 
 const ServicesScreen: FC<Props> = ({ canEdit, accentColor }) => {
   const navigation = useNavigation<any>();
+  const route = useRoute<any>();
   const { token } = useSelector((state: RootState) => state.auth);
 
   const [activeTab, setActiveTab] = useState<ServiceType>('Rooms');
   const [data, setData] = useState<Record<ServiceType, any[]>>({
-    Rooms: [], Tours: [], Food: [], Packages: [],
+    Rooms: [], Tours: [], Food: [], Packages: [], Spa: [],
   });
   const [loading, setLoading]     = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [deleteConfig, setDeleteConfig] = useState<ConfirmModalConfig | null>(null);
+
+  useEffect(() => {
+    const initialTab = route.params?.initialTab as ServiceType | undefined;
+    if (initialTab && TABS.some(tab => tab.key === initialTab)) setActiveTab(initialTab);
+  }, [route.params?.initialTab]);
 
   const fetchAll = useCallback(async () => {
     try {
-      const [r, t, f, p] = await Promise.all([
-        getRooms(token), getTours(token), getFoods(token), getPackages(token),
+      const [r, t, f, p, s] = await Promise.all([
+        getRooms(token), getTours(token), getFoods(token), getPackages(token), getSpaServices(token),
       ]);
       setData({
-        Rooms:    r.data ?? [],
-        Tours:    t.data ?? [],
-        Food:     f.data ?? [],
-        Packages: p.data ?? [],
+        Rooms:    collectionOf(r),
+        Tours:    collectionOf(t),
+        Food:     collectionOf(f),
+        Packages: collectionOf(p),
+        Spa:      collectionOf(s),
       });
     } catch (e) {
       console.error('[ServicesScreen]', e);
@@ -130,32 +150,37 @@ const ServicesScreen: FC<Props> = ({ canEdit, accentColor }) => {
       Tours:    { detail: ROUTES.TOUR_DETAIL,    form: ROUTES.TOUR_FORM },
       Food:     { detail: ROUTES.FOOD_DETAIL,    form: ROUTES.FOOD_FORM },
       Packages: { detail: ROUTES.PACKAGE_DETAIL, form: ROUTES.PACKAGE_FORM },
+      Spa:      { detail: ROUTES.SPA_DETAIL,     form: ROUTES.SPA_FORM },
     };
     return map[type][action];
   };
 
   const handleDelete = (item: any, type: ServiceType) => {
-    Alert.alert(
-      'Delete',
-      `Delete "${item.name || item.roomNumber}"?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete', style: 'destructive',
-          onPress: async () => {
-            try {
-              if (type === 'Rooms')    await deleteRoom(item.id, token);
-              if (type === 'Tours')    await deleteTour(item.id, token);
-              if (type === 'Food')     await deleteFood(item.id, token);
-              if (type === 'Packages') await deletePackage(item.id, token);
-              fetchAll();
-            } catch (e: any) {
-              Alert.alert('Error', e.message);
-            }
-          },
-        },
-      ],
-    );
+    const label = item.name || item.roomNumber || `#${item.id}`;
+    setDeleteConfig({
+      icon:         'trash-can-outline',
+      iconBg:       COLORS.errorFaded,
+      iconColor:    COLORS.error,
+      title:        'Delete Service?',
+      message:      `Delete "${label}"? This cannot be undone.`,
+      confirmLabel: 'Delete',
+      cancelLabel:  'Cancel',
+      dangerous:    true,
+      onCancel:     () => setDeleteConfig(null),
+      onConfirm:    async () => {
+        setDeleteConfig(null);
+        try {
+          if (type === 'Rooms')    await deleteRoom(item.id, token);
+          if (type === 'Tours')    await deleteTour(item.id, token);
+          if (type === 'Food')     await deleteFood(item.id, token);
+          if (type === 'Packages') await deletePackage(item.id, token);
+          if (type === 'Spa')      await deleteSpa(item.id, token);
+          fetchAll();
+        } catch (e: any) {
+          Alert.alert('Error', e.message);
+        }
+      },
+    });
   };
 
   const items = data[activeTab];
@@ -220,6 +245,7 @@ const ServicesScreen: FC<Props> = ({ canEdit, accentColor }) => {
             )}
           />
       }
+      <ConfirmModal config={deleteConfig} />
     </View>
   );
 };

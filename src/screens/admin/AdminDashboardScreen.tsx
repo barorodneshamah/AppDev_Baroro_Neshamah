@@ -35,7 +35,18 @@ interface QuickAction {
   icon:  string;
   label: string;
   color: string;
+  route: string;
+  params?: object;
 }
+
+const collectionOf = (response: any): any[] => {
+  if (Array.isArray(response)) return response;
+  if (Array.isArray(response?.['hydra:member'])) return response['hydra:member'];
+  if (Array.isArray(response?.member)) return response.member;
+  if (Array.isArray(response?.data)) return response.data;
+  if (Array.isArray(response?.items)) return response.items;
+  return [];
+};
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -87,8 +98,8 @@ const ServiceCard: FC<{ item: ServiceStat }> = ({ item }) => (
   </View>
 );
 
-const ActionCard: FC<{ item: QuickAction }> = ({ item }) => (
-  <TouchableOpacity style={styles.actionCard} activeOpacity={0.75}>
+const ActionCard: FC<{ item: QuickAction; onPress: () => void }> = ({ item, onPress }) => (
+  <TouchableOpacity style={styles.actionCard} activeOpacity={0.75} onPress={onPress}>
     <View style={[styles.actionIconBox, { backgroundColor: item.color + '1A' }]}>
       <Icon name={item.icon} size={17} color={item.color} />
     </View>
@@ -139,7 +150,7 @@ const AdminDashboardScreen: FC = () => {
         if (s.action === 'Rooms')    return { ...s, count: roomsRes.total ?? 0, available: roomsRes.showing ?? 0 };
         if (s.action === 'Foods')    return { ...s, count: foodsRes.total ?? 0, available: foodsRes.showing ?? 0 };
         if (s.action === 'Spa') {
-          const members = spaRes?.['hydra:member'] ?? spaRes?.data ?? [];
+          const members = collectionOf(spaRes);
           return { ...s, count: members.length, available: members.filter((m: any) => m.status === 'Available').length };
         }
         return s;
@@ -163,10 +174,12 @@ const AdminDashboardScreen: FC = () => {
   ];
 
   const quickActions: QuickAction[] = [
-    { icon: 'account-group',  label: 'Manage Users',  color: COLORS.primary },
-    { icon: 'calendar',       label: 'Reservations',  color: '#2563eb' },
-    { icon: 'credit-card',    label: 'Payments',      color: '#059669' },
-    { icon: 'history',        label: 'Activity Logs', color: '#7c3aed' },
+    { icon: 'account-group',    label: 'Manage Users',    color: COLORS.primary, route: 'UsersTab' },
+    { icon: 'calendar',         label: 'Reservations',    color: '#2563eb',      route: 'ReservationsTab' },
+    { icon: 'credit-card',      label: 'Payments',        color: '#059669',      route: 'PaymentsTab' },
+    { icon: 'gift',             label: 'View Packages',   color: '#7c3aed',      route: 'ServicesTab', params: { screen: ROUTES.ADMIN_SERVICES, params: { initialTab: 'Packages' } } },
+    { icon: 'spa',              label: 'Spa & Wellness',  color: '#db2777',      route: 'ServicesTab', params: { screen: ROUTES.ADMIN_SERVICES, params: { initialTab: 'Spa' } } },
+    { icon: 'history',          label: 'Activity Logs',   color: '#475569',      route: 'UsersTab', params: { screen: ROUTES.ADMIN_ACTIVITY_LOGS } },
   ];
 
   const initials = (data?.fullName || data?.username || 'A')
@@ -250,7 +263,13 @@ const AdminDashboardScreen: FC = () => {
           <Text style={styles.sectionTitle}>Quick Actions</Text>
         </View>
         <View style={styles.grid2}>
-          {quickActions.map(a => <ActionCard key={a.label} item={a} />)}
+          {quickActions.map(a => (
+            <ActionCard
+              key={a.label}
+              item={a}
+              onPress={() => navigation.navigate(a.route, a.params)}
+            />
+          ))}
         </View>
       </ScrollView>
     </View>

@@ -20,6 +20,24 @@ interface ApiResponse {
   [key: string]: any;
 }
 
+export class ApiError extends Error {
+  status: number;
+  body?: any;
+
+  constructor(message: string, status: number, body?: any) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.body = body;
+  }
+}
+
+export const isAuthError = (error: any): boolean => {
+  if (!error) return false;
+  if (error.status === 401 || error.status === 403) return true;
+  return typeof error.message === 'string' && /expired|jwt|unauthorized|invalid token/i.test(error.message);
+};
+
 export interface ContactMessagePayload {
   fullName: string;
   email: string;
@@ -75,7 +93,7 @@ const apiGet = async (path: string, token?: string | null): Promise<ApiResponse>
     headers: buildHeaders(token),
   });
   const data = await response.json();
-  if (!response.ok) throw new Error(data.message || data.error || `Request failed: ${response.status}`);
+  if (!response.ok) throw new ApiError(extractError(data, response.status), response.status, data);
   return data;
 };
 
@@ -95,7 +113,7 @@ const apiPost = async (path: string, body: object, token?: string | null): Promi
     body: JSON.stringify(body),
   });
   const data = await response.json();
-  if (!response.ok) throw new Error(extractError(data, response.status));
+  if (!response.ok) throw new ApiError(extractError(data, response.status), response.status, data);
   return data;
 };
 
@@ -112,7 +130,7 @@ export const apiFetch = async <T = any>(
   };
   const response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
   const data = await response.json();
-  if (!response.ok) throw new Error(data.message || data.error || `Request failed: ${response.status}`);
+  if (!response.ok) throw new ApiError(extractError(data, response.status), response.status, data);
   return data as T;
 };
 
@@ -170,6 +188,11 @@ export const getPackage  = (id: number, token?: string | null) => apiGet(`/api/p
 
 export const getSpaServices = (token?: string | null) => apiGet('/api/spas', token);
 export const getSpaService  = (id: number, token?: string | null) => apiGet(`/api/spas/${id}`, token);
+export const createSpa      = (payload: object, token?: string | null) => apiPost('/api/services/spas', payload, token);
+export const updateSpa      = (id: number, payload: object, token?: string | null) =>
+  apiFetch(`/api/spas/${id}`, token, { method: 'PUT', body: JSON.stringify(payload) });
+export const deleteSpa      = (id: number, token?: string | null) =>
+  apiFetch(`/api/spas/${id}`, token, { method: 'DELETE' });
 
 // ─── Current user ─────────────────────────────────────────────────────────────
 
@@ -215,7 +238,7 @@ export const submitContactReply = (payload: ContactReplyPayload, token?: string 
 // ─── Reviews ──────────────────────────────────────────────────────────────────
 
 export const getItemReviews = (serviceType: string, serviceId: number, token?: string | null) =>
-  apiGet(`/api/reviews?serviceType=${serviceType}&serviceId=${serviceId}`, token);
+  apiGet(`/api/wall/reviews?serviceTag=${serviceType}&serviceId=${serviceId}`, token);
 
 // ─── Activity Logs ────────────────────────────────────────────────────────────
 
@@ -226,15 +249,15 @@ export const getActivityLog  = (id: number, token?: string | null) => apiGet(`/a
 
 export const getUsers    = (token?: string | null) => apiGet('/api/users', token);
 export const getUser     = (id: number, token?: string | null) => apiGet(`/api/users/${id}`, token);
-export const createUser  = (payload: object, token?: string | null) => apiPost('/api/users', payload, token);
+export const createUser  = (payload: object, token?: string | null) => apiPost('/api/admin/users', payload, token);
 export const updateUser  = (id: number, payload: object, token?: string | null) =>
-  apiFetch(`/api/users/${id}`, token, { method: 'PUT', body: JSON.stringify(payload) });
+  apiFetch(`/api/admin/users/${id}`, token, { method: 'PUT', body: JSON.stringify(payload) });
 export const deleteUser  = (id: number, token?: string | null) =>
   apiFetch(`/api/users/${id}`, token, { method: 'DELETE' });
 
 // ─── Room CRUD ────────────────────────────────────────────────────────────────
 
-export const createRoom  = (payload: object, token?: string | null) => apiPost('/api/rooms', payload, token);
+export const createRoom  = (payload: object, token?: string | null) => apiPost('/api/services/rooms', payload, token);
 export const updateRoom  = (id: number, payload: object, token?: string | null) =>
   apiFetch(`/api/rooms/${id}`, token, { method: 'PUT', body: JSON.stringify(payload) });
 export const deleteRoom  = (id: number, token?: string | null) =>
@@ -242,7 +265,7 @@ export const deleteRoom  = (id: number, token?: string | null) =>
 
 // ─── Tour CRUD ────────────────────────────────────────────────────────────────
 
-export const createTour  = (payload: object, token?: string | null) => apiPost('/api/tours', payload, token);
+export const createTour  = (payload: object, token?: string | null) => apiPost('/api/services/tours', payload, token);
 export const updateTour  = (id: number, payload: object, token?: string | null) =>
   apiFetch(`/api/tours/${id}`, token, { method: 'PUT', body: JSON.stringify(payload) });
 export const deleteTour  = (id: number, token?: string | null) =>
@@ -250,7 +273,7 @@ export const deleteTour  = (id: number, token?: string | null) =>
 
 // ─── Food CRUD ────────────────────────────────────────────────────────────────
 
-export const createFood  = (payload: object, token?: string | null) => apiPost('/api/foods', payload, token);
+export const createFood  = (payload: object, token?: string | null) => apiPost('/api/services/food', payload, token);
 export const updateFood  = (id: number, payload: object, token?: string | null) =>
   apiFetch(`/api/foods/${id}`, token, { method: 'PUT', body: JSON.stringify(payload) });
 export const deleteFood  = (id: number, token?: string | null) =>
@@ -258,11 +281,11 @@ export const deleteFood  = (id: number, token?: string | null) =>
 
 // ─── Package CRUD ─────────────────────────────────────────────────────────────
 
-export const createPackage = (payload: object, token?: string | null) => apiPost('/api/packages', payload, token);
+export const createPackage = (payload: object, token?: string | null) => apiPost('/api/services/packages', payload, token);
 export const updatePackage = (id: number, payload: object, token?: string | null) =>
-  apiFetch(`/api/packages/${id}`, token, { method: 'PUT', body: JSON.stringify(payload) });
+  apiFetch(`/api/services/packages/${id}`, token, { method: 'PUT', body: JSON.stringify(payload) });
 export const deletePackage = (id: number, token?: string | null) =>
-  apiFetch(`/api/packages/${id}`, token, { method: 'DELETE' });
+  apiFetch(`/api/services/packages/${id}`, token, { method: 'DELETE' });
 
 // ─── Reservation actions ──────────────────────────────────────────────────────
 
@@ -296,11 +319,169 @@ export const replyToMessage      = (id: number, message: string, token?: string 
 // ─── Profile ──────────────────────────────────────────────────────────────────
 
 export const updateProfile  = (id: number, payload: object, token?: string | null) =>
-  apiFetch(`/api/users/${id}`, token, { method: 'PUT', body: JSON.stringify(payload) });
-export const changePassword = (payload: { currentPassword: string; newPassword: string }, token?: string | null) =>
+  apiFetch(`/api/users/${id}`, token, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/merge-patch+json' },
+    body: JSON.stringify(payload),
+  });
+export const changePassword = (payload: { newPassword: string; confirmPassword: string }, token?: string | null) =>
   apiPost('/api/change-password', payload, token);
 
 // ─── Mercure ──────────────────────────────────────────────────────────────────
 
 export const getMercureToken = (token?: string | null) =>
   apiGet('/api/mercure/token', token);
+
+// ─── Admin / Staff Notifications ─────────────────────────────────────────────
+
+export const getAdminPendingNotifications = (since?: number, token?: string | null) =>
+  apiGet(`/api/admin/notifications/pending${since ? `?since=${since}` : ''}`, token);
+
+// ─── Share Wall ───────────────────────────────────────────────────────────────
+
+export interface WallApiPost {
+  id: string;
+  authorId: number;
+  authorName: string;
+  authorRole: string;
+  caption: string;
+  imageUri?: string;
+  serviceTag?: string;
+  reservationId?: number;
+  serviceId?: number;
+  isPinned: boolean;
+  likedBy: number[];
+  comments: WallApiComment[];
+  createdAt: string;
+}
+
+export interface WallApiComment {
+  id: string;
+  authorId: number;
+  authorName: string;
+  text: string;
+  createdAt: string;
+}
+
+export const getWallPosts = (limit = 30, offset = 0, token?: string | null) =>
+  apiGet(`/api/wall/posts?limit=${limit}&offset=${offset}`, token);
+
+export const getFeaturedWallPosts = (limit = 6) =>
+  apiGet(`/api/wall/featured?limit=${limit}`, null);
+
+export const getMyWallPosts = (token: string | null) =>
+  apiGet('/api/wall/posts/mine', token);
+
+export const uploadWallImage = async (
+  localUri: string,
+  token: string | null,
+  fileName?: string,
+  mimeType?: string,
+): Promise<string> => {
+  const fallbackName = localUri.split('/').pop() ?? 'photo.jpg';
+  const match = /\.(\w+)$/.exec(fallbackName);
+  const name = fileName ?? (match ? fallbackName : `photo_${Date.now()}.jpg`);
+  const type = mimeType ?? (match ? `image/${match[1]}` : 'image/jpeg');
+
+  const body = new FormData();
+  body.append('file', { uri: localUri, name, type } as any);
+
+  // Do NOT set Content-Type manually — React Native sets multipart/form-data + boundary automatically.
+  const res = await fetch(`${API_BASE_URL}/api/wall/upload-image`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body,
+  });
+
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = (json as any).error ?? `Upload failed (${res.status})`;
+    console.error('[uploadWallImage] error:', res.status, msg, '| uri:', localUri);
+    throw new Error(msg);
+  }
+
+  const url: string = (json as any).url;
+  if (!url) throw new Error('Server did not return an image URL');
+  return url;
+};
+
+export const uploadServiceImage = async (
+  localUri: string,
+  token: string | null,
+  serviceType: 'rooms' | 'tours' | 'foods' | 'packages' | 'spas',
+  fileName?: string,
+  mimeType?: string,
+): Promise<string> => {
+  const fallbackName = localUri.split('/').pop() ?? 'photo.jpg';
+  const match = /\.(\w+)$/.exec(fallbackName);
+  const name = fileName ?? (match ? fallbackName : `service_${Date.now()}.jpg`);
+  const type = mimeType ?? (match ? `image/${match[1]}` : 'image/jpeg');
+
+  const body = new FormData();
+  body.append('file', { uri: localUri, name, type } as any);
+  body.append('serviceType', serviceType);
+
+  const res = await fetch(`${API_BASE_URL}/api/services/upload-image`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body,
+  });
+
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = (json as any).error ?? (json as any).message ?? `Upload failed (${res.status})`;
+    console.error('[uploadServiceImage] error:', res.status, msg, '| uri:', localUri);
+    throw new Error(msg);
+  }
+
+  const url: string = (json as any).url;
+  if (!url) throw new Error('Server did not return an image URL');
+  return url;
+};
+
+export const createWallPost = (
+  payload: { caption: string; imageUri?: string; serviceTag?: string; reservationId?: number; serviceId?: number },
+  token: string | null
+) => apiPost('/api/wall/posts', payload, token);
+
+export const toggleWallLike = (postId: string, token: string | null) =>
+  apiPost(`/api/wall/posts/${postId}/like`, {}, token);
+
+export const addWallComment = (postId: string, text: string, token: string | null) =>
+  apiPost(`/api/wall/posts/${postId}/comments`, { text }, token);
+
+export const deleteWallPost = (postId: string, token: string | null) =>
+  apiFetch(`/api/wall/posts/${postId}`, token, { method: 'DELETE' });
+
+export const pinWallPost = (postId: string, token: string | null) =>
+  apiPost(`/api/wall/posts/${postId}/pin`, {}, token);
+
+// ─── Reservation Reschedule ───────────────────────────────────────────────────
+
+export interface ReschedulePayload {
+  checkInDate?: string;
+  checkOutDate?: string;
+  tourDate?: string;
+  status?: string;
+}
+
+export const rescheduleReservation = (id: number, payload: ReschedulePayload, token: string | null) =>
+  apiFetch(`/api/reservations/${id}`, token, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/merge-patch+json' },
+    body: JSON.stringify(payload),
+  });
+
+// ─── Reservation Extension ────────────────────────────────────────────────────
+
+export interface ExtensionPayload {
+  newCheckoutDate?: string;  // rooms:  YYYY-MM-DD
+  newTourDate?: string;      // tours:  YYYY-MM-DD
+  newParticipants?: number;  // tours:  optional
+  newDate?: string;          // spa:    YYYY-MM-DD
+  newCheckInDate?: string;   // package
+  newCheckOutDate?: string;  // package
+}
+
+export const requestExtension = (id: number, payload: ExtensionPayload, token: string | null) =>
+  apiPost(`/api/reservations/${id}/request-extension`, payload, token);

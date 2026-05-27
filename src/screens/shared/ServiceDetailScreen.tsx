@@ -8,12 +8,13 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useSelector } from 'react-redux';
 import { RootState } from '../../store';
-import { getRoom, getTour, getFood, getPackage, deleteRoom, deleteTour, deleteFood, deletePackage } from '../../app/api/api';
+import { getRoom, getTour, getFood, getPackage, getSpaService, deleteRoom, deleteTour, deleteFood, deletePackage, deleteSpa } from '../../app/api/api';
 import { COLORS, FONTS, SHADOW, RADIUS } from '../../theme';
 import ROUTES from '../../utils';
 import { API_BASE_URL } from '../../config/firebase';
+import { ConfirmModal, ConfirmModalConfig } from '../../components/AppModals';
 
-type ServiceType = 'Rooms' | 'Tours' | 'Food' | 'Packages';
+type ServiceType = 'Rooms' | 'Tours' | 'Food' | 'Packages' | 'Spa';
 
 interface Props { canEdit: boolean; accentColor: string; }
 
@@ -33,6 +34,7 @@ const ServiceDetailScreen: FC<Props> = ({ canEdit, accentColor }) => {
 
   const [item, setItem]     = useState<any>(passedItem ?? null);
   const [loading, setLoading] = useState(!passedItem);
+  const [deleteConfig, setDeleteConfig] = useState<ConfirmModalConfig | null>(null);
 
   useEffect(() => {
     if (passedItem) return;
@@ -43,6 +45,7 @@ const ServiceDetailScreen: FC<Props> = ({ canEdit, accentColor }) => {
         if (type === 'Tours')    res = await getTour(id, token);
         if (type === 'Food')     res = await getFood(id, token);
         if (type === 'Packages') res = await getPackage(id, token);
+        if (type === 'Spa')      res = await getSpaService(id, token);
         setItem(res);
       } catch (e) { console.error('[ServiceDetail]', e); }
       finally { setLoading(false); }
@@ -56,31 +59,84 @@ const ServiceDetailScreen: FC<Props> = ({ canEdit, accentColor }) => {
       Tours:    ROUTES.TOUR_FORM,
       Food:     ROUTES.FOOD_FORM,
       Packages: ROUTES.PACKAGE_FORM,
+      Spa:      ROUTES.SPA_FORM,
     };
     return map[type];
   };
 
   const handleDelete = () => {
-    Alert.alert('Delete', `Delete "${item?.name || item?.roomNumber}"?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete', style: 'destructive',
-        onPress: async () => {
-          try {
-            if (type === 'Rooms')    await deleteRoom(id, token);
-            if (type === 'Tours')    await deleteTour(id, token);
-            if (type === 'Food')     await deleteFood(id, token);
-            if (type === 'Packages') await deletePackage(id, token);
-            navigation.goBack();
-          } catch (e: any) { Alert.alert('Error', e.message); }
-        },
+    const label = item?.name || item?.roomNumber || type.slice(0, -1);
+    setDeleteConfig({
+      icon:         'trash-can-outline',
+      iconBg:       COLORS.errorFaded,
+      iconColor:    COLORS.error,
+      title:        'Delete Service?',
+      message:      `Delete "${label}"? This cannot be undone.`,
+      confirmLabel: 'Delete',
+      cancelLabel:  'Cancel',
+      dangerous:    true,
+      onCancel:     () => setDeleteConfig(null),
+      onConfirm:    async () => {
+        setDeleteConfig(null);
+        try {
+          if (type === 'Rooms')    await deleteRoom(id, token);
+          if (type === 'Tours')    await deleteTour(id, token);
+          if (type === 'Food')     await deleteFood(id, token);
+          if (type === 'Packages') await deletePackage(id, token);
+          if (type === 'Spa')      await deleteSpa(id, token);
+          navigation.goBack();
+        } catch (e: any) { Alert.alert('Error', e.message); }
       },
-    ]);
+    });
   };
 
-  const mainImage = item?.mainImage
-    ? `${API_BASE_URL}/${item.mainImage}`.replace(/\/\/+/, '/')
-    : null;
+  const resolveImageUri = (path?: string | null): string | undefined => {
+    if (!path) return undefined;
+    if (path.startsWith('http://') || path.startsWith('https://')) return path;
+    return `${API_BASE_URL}/${path}`.replace(/([^:]\/\/)\/+/, '$1');
+  };
+
+  const mainImage = resolveImageUri(item?.mainImage || item?.image || item?.imageUrl);
+
+  const normalizeList = (value?: any): string[] => {
+    if (!value) return [];
+    if (Array.isArray(value)) return value.filter(Boolean).map(v => String(v).trim());
+    return String(value)
+      .split(',')
+      .map(v => v.trim())
+      .filter(Boolean);
+  };
+
+  const renderChipSection = (label: string, values?: any) => {
+    const list = normalizeList(values);
+    if (!list.length) return null;
+    return (
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>{label}</Text>
+        <View style={styles.chipRow}>
+          {list.map((value, index) => (
+            <TouchableOpacity
+              key={`${label}-${index}`}
+              style={styles.chip}
+              onPress={() => Alert.alert(label, value)}
+            >
+              <Text style={styles.chipText}>{value}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+    );
+  };
+
+  const renderPackageItems = (label: string, values?: any[]) => {
+    if (!Array.isArray(values) || values.length === 0) return null;
+    const labels = values.map(value => {
+      if (!value || typeof value !== 'object') return String(value);
+      if (value.roomNumber) return `Room ${value.roomNumber}${value.roomType ? ` - ${value.roomType}` : ''}`;
+      return value.name || value.title || `Item ${value.id}`;
+    });
+    return renderChipSection(label, labels);
+  };
 
   const renderFields = () => {
     if (!item) return null;
@@ -92,7 +148,6 @@ const ServiceDetailScreen: FC<Props> = ({ canEdit, accentColor }) => {
         <Row label="Capacity"    value={item.capacity} />
         <Row label="Status"      value={item.status} />
         <Row label="Description" value={item.description} />
-        <Row label="Features"    value={Array.isArray(item.features) ? item.features.join(', ') : item.features} />
       </>
     );
     if (type === 'Tours') return (
@@ -128,8 +183,17 @@ const ServiceDetailScreen: FC<Props> = ({ canEdit, accentColor }) => {
         <Row label="Valid Until"      value={item.validUntil} />
         <Row label="Status"           value={item.status} />
         <Row label="Description"      value={item.description} />
-        <Row label="Inclusions"       value={item.inclusions} />
-        <Row label="Exclusions"       value={item.exclusions} />
+      </>
+    );
+    if (type === 'Spa') return (
+      <>
+        <Row label="Name"            value={item.name} />
+        <Row label="Category"        value={item.category} />
+        <Row label="Price"           value={`₱${item.price}`} />
+        <Row label="Duration"        value={item.duration} />
+        <Row label="Capacity"        value={item.capacity} />
+        <Row label="Status"          value={item.status} />
+        <Row label="Description"     value={item.description} />
       </>
     );
   };
@@ -167,6 +231,14 @@ const ServiceDetailScreen: FC<Props> = ({ canEdit, accentColor }) => {
               {renderFields()}
             </View>
 
+            {renderChipSection('Features', item.features)}
+            {renderChipSection('Amenities', item.amenities)}
+            {renderChipSection('Inclusions', item.inclusions)}
+            {renderChipSection('Exclusions', item.exclusions)}
+            {renderPackageItems('Included Rooms', item.rooms)}
+            {renderPackageItems('Included Tours', item.tours)}
+            {renderPackageItems('Included Food', item.foods)}
+
             {/* Edit button */}
             {canEdit && (
               <TouchableOpacity
@@ -180,6 +252,7 @@ const ServiceDetailScreen: FC<Props> = ({ canEdit, accentColor }) => {
           </ScrollView>
         )
       }
+      <ConfirmModal config={deleteConfig} />
     </View>
   );
 };
@@ -205,6 +278,17 @@ const styles = StyleSheet.create({
   row:   { paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: COLORS.border },
   rowLabel: { fontSize: 11, color: COLORS.textMuted, fontFamily: FONTS.body, marginBottom: 2 },
   rowValue: { fontSize: 14, color: COLORS.textDark, fontFamily: FONTS.medium },
+
+  section: { marginBottom: 16, paddingHorizontal: 2 },
+  sectionTitle: { fontSize: 12, color: COLORS.textMuted, fontFamily: FONTS.bold, marginBottom: 8, textTransform: 'uppercase' },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  chip: {
+    paddingVertical: 8, paddingHorizontal: 12,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.surfaceAlt,
+    borderWidth: 1, borderColor: COLORS.border,
+  },
+  chipText: { fontSize: 13, color: COLORS.textDark, fontFamily: FONTS.medium },
 
   editBtn:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 16, borderRadius: RADIUS.md },
   editBtnText: { color: '#fff', fontSize: 15, fontWeight: '700', fontFamily: FONTS.bold },

@@ -6,19 +6,37 @@ import {
   Image, StatusBar, Dimensions,
 } from 'react-native';
 import { useSelector } from 'react-redux';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { getRooms, getTours, getPackages, getFoods, getSpaServices } from '../app/api/api';
 import { COLORS, FONTS, RADIUS, SHADOW, SPACING } from '../theme';
 import ROUTES from '../utils';
+import API_BASE_URL from '../config/api.config';
 
 const { width } = Dimensions.get('window');
-const API_BASE  = 'http://192.168.254.138:8000';
+const API_BASE  = API_BASE_URL;
 
-const resolveImage = (path?: string, seed = 'item'): string => {
+const UPLOAD_DIR: Record<string, string> = {
+  room:    'uploads/rooms',
+  tour:    'uploads/tours',
+  food:    'uploads/foods',
+  package: 'uploads/packages',
+  spa:     'uploads/spas',
+};
+
+const resolveImage = (path?: string, seed = 'item', type?: string): string => {
   if (!path) return `https://picsum.photos/seed/${seed}/400/240`;
-  if (path.startsWith('http')) return path;
-  return `${API_BASE}${path}`;
+  // Already a full URL — but may contain localhost if built server-side
+  if (path.startsWith('http')) {
+    return path.replace(/https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/, API_BASE);
+  }
+  // Absolute path (starts with /)
+  if (path.startsWith('/')) return `${API_BASE}${path}`;
+  // Relative path already includes uploads/
+  if (path.startsWith('uploads/')) return `${API_BASE}/${path}`;
+  // Bare filename — prefix with type-specific upload directory
+  if (type && UPLOAD_DIR[type]) return `${API_BASE}/${UPLOAD_DIR[type]}/${path}`;
+  return `${API_BASE}/uploads/${path}`;
 };
 
 interface ServiceItem {
@@ -70,7 +88,7 @@ const ItemCard: FC<{ item: ServiceItem; type: string; onPress: () => void }> = (
   return (
     <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.88}>
       <Image
-        source={{ uri: resolveImage(item.image || item.mainImage, `${type}${item.id}`) }}
+        source={{ uri: resolveImage(item.image || item.mainImage, `${type}${item.id}`, type) }}
         style={styles.cardImage}
       />
       <View style={[styles.typeBadge, { backgroundColor: meta.color }]}>
@@ -98,9 +116,13 @@ const ItemCard: FC<{ item: ServiceItem; type: string; onPress: () => void }> = (
 const ExploreScreen: FC = () => {
   const { token } = useSelector((state: any) => state.auth);
   const navigation = useNavigation<any>();
+  const route      = useRoute<any>();
 
   const [query,      setQuery]      = useState('');
-  const [tab,        setTab]        = useState<FilterTab>('All');
+  const [tab,        setTab]        = useState<FilterTab>(() => {
+    const p = route.params?.initialTab as FilterTab | undefined;
+    return TABS.includes(p as FilterTab) ? (p as FilterTab) : 'All';
+  });
   const [loading,    setLoading]    = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -109,22 +131,40 @@ const ExploreScreen: FC = () => {
   const [packages, setPackages] = useState<ServiceItem[]>([]);
   const [foods,    setFoods]    = useState<ServiceItem[]>([]);
   const [spas,     setSpas]     = useState<ServiceItem[]>([]);
+  const [spaError, setSpaError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const p = route.params?.initialTab as FilterTab | undefined;
+    if (p && TABS.includes(p)) setTab(p);
+  }, [route.params?.initialTab]);
+
+  const pick = (r: any): ServiceItem[] =>
+    r?.['hydra:member'] ?? r?.member ?? r?.data ?? (Array.isArray(r) ? r : []);
 
   const fetchAll = useCallback(async () => {
+    setSpaError(null);
+    const [r, t, p, f] = await Promise.allSettled([
+      getRooms(token),
+      getTours(token),
+      getPackages(token),
+      getFoods(token),
+    ]);
+    setRooms(r.status === 'fulfilled' ? pick(r.value) : []);
+    setTours(t.status === 'fulfilled' ? pick(t.value) : []);
+    setPackages(p.status === 'fulfilled' ? pick(p.value) : []);
+    setFoods(f.status === 'fulfilled' ? pick(f.value) : []);
+
+    // Spa fetched separately so its error is visible
     try {
-      const [r, t, p, f, s] = await Promise.all([
-        getRooms(token).catch(() => ({ data: [] })),
-        getTours(token).catch(() => ({ data: [] })),
-        getPackages(token).catch(() => ({ data: [] })),
-        getFoods(token).catch(() => ({ data: [] })),
-        getSpaServices(token).catch(() => ({ data: [] })),
-      ]);
-      setRooms(r?.data ?? r?.['hydra:member'] ?? []);
-      setTours(t?.data ?? t?.['hydra:member'] ?? []);
-      setPackages(p?.data ?? p?.['hydra:member'] ?? []);
-      setFoods(f?.data ?? f?.['hydra:member'] ?? []);
-      setSpas(s?.data ?? s?.['hydra:member'] ?? []);
-    } catch { /* silent */ }
+      const s = await getSpaServices(token);
+      const items = pick(s);
+      setSpas(items);
+      if (items.length === 0) console.warn('[Explore] Spa endpoint returned 0 items');
+    } catch (err: any) {
+      console.error('[Explore] Spa fetch failed:', err?.message ?? err);
+      setSpaError(err?.message ?? 'Could not load spa services');
+      setSpas([]);
+    }
   }, [token]);
 
   useEffect(() => {
@@ -163,7 +203,7 @@ const ExploreScreen: FC = () => {
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor={COLORS.surface} />
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.primary} />
 
       {/* Header */}
       <View style={styles.header}>
@@ -172,7 +212,7 @@ const ExploreScreen: FC = () => {
           <Text style={styles.subtitle}>Discover rooms, tours & more</Text>
         </View>
         <View style={styles.countBadge}>
-          <Text style={styles.countText}>{filtered.length}</Text>
+          <Text style={styles.countText}>{filtered.length} results</Text>
         </View>
       </View>
 
@@ -222,9 +262,19 @@ const ExploreScreen: FC = () => {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />}
           ListEmptyComponent={
             <View style={styles.empty}>
-              <Icon name="magnify-remove-outline" size={56} color={COLORS.border} />
-              <Text style={styles.emptyTitle}>No results found</Text>
-              <Text style={styles.emptyText}>Try a different keyword or category</Text>
+              {tab === 'Spa' && spaError ? (
+                <>
+                  <Icon name="alert-circle-outline" size={56} color={COLORS.warning} />
+                  <Text style={styles.emptyTitle}>Spa services unavailable</Text>
+                  <Text style={styles.emptyText}>{spaError}</Text>
+                </>
+              ) : (
+                <>
+                  <Icon name="magnify-remove-outline" size={56} color={COLORS.border} />
+                  <Text style={styles.emptyTitle}>No results found</Text>
+                  <Text style={styles.emptyText}>Try a different keyword or category</Text>
+                </>
+              )}
             </View>
           }
           renderItem={({ item: { item, type } }) => (
@@ -249,15 +299,18 @@ const styles = StyleSheet.create({
 
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: SPACING.md,
+    paddingHorizontal: SPACING.lg,
     paddingTop: Platform.OS === 'ios' ? 56 : 44,
-    paddingBottom: SPACING.sm,
-    backgroundColor: COLORS.surface,
+    paddingBottom: SPACING.lg,
+    backgroundColor: COLORS.primary,
+    borderBottomLeftRadius: 20,
+    borderBottomRightRadius: 20,
+    ...SHADOW.brand,
   },
-  title:    { fontSize: 26, fontFamily: FONTS.display, color: COLORS.textDark, fontWeight: '700' },
-  subtitle: { fontSize: 13, color: COLORS.textMuted, fontFamily: FONTS.body, marginTop: 2 },
-  countBadge: { backgroundColor: COLORS.primaryFaded, borderRadius: RADIUS.full, paddingHorizontal: 12, paddingVertical: 5 },
-  countText:  { fontSize: 13, fontFamily: FONTS.bold, fontWeight: '700', color: COLORS.primary },
+  title:    { fontSize: 26, fontFamily: FONTS.display, color: '#fff', fontWeight: '700' },
+  subtitle: { fontSize: 13, color: 'rgba(255,255,255,0.75)', fontFamily: FONTS.body, marginTop: 2 },
+  countBadge: { backgroundColor: 'rgba(255,255,255,0.22)', borderRadius: RADIUS.full, paddingHorizontal: 14, paddingVertical: 6 },
+  countText:  { fontSize: 13, fontFamily: FONTS.bold, fontWeight: '700', color: '#fff' },
 
   searchRow: { paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm, backgroundColor: COLORS.surface },
   searchBox: {

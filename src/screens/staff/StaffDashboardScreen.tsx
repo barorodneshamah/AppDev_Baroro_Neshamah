@@ -29,7 +29,18 @@ interface QuickAction {
   icon:  string;
   label: string;
   color: string;
+  route: string;
+  params?: object;
 }
+
+const collectionOf = (response: any): any[] => {
+  if (Array.isArray(response)) return response;
+  if (Array.isArray(response?.['hydra:member'])) return response['hydra:member'];
+  if (Array.isArray(response?.member)) return response.member;
+  if (Array.isArray(response?.data)) return response.data;
+  if (Array.isArray(response?.items)) return response.items;
+  return [];
+};
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -59,8 +70,8 @@ const ServiceCard: FC<{ item: ServiceStat }> = ({ item }) => (
   </View>
 );
 
-const ActionCard: FC<{ item: QuickAction }> = ({ item }) => (
-  <TouchableOpacity style={styles.actionCard} activeOpacity={0.75}>
+const ActionCard: FC<{ item: QuickAction; onPress: () => void }> = ({ item, onPress }) => (
+  <TouchableOpacity style={styles.actionCard} activeOpacity={0.75} onPress={onPress}>
     <View style={[styles.actionIconBox, { backgroundColor: item.color + '1A' }]}>
       <Icon name={item.icon} size={17} color={item.color} />
     </View>
@@ -110,7 +121,7 @@ const StaffDashboardScreen: FC = () => {
         if (s.action === 'Rooms') return { ...s, count: roomsRes.total ?? 0, available: roomsRes.showing ?? 0 };
         if (s.action === 'Foods') return { ...s, count: foodsRes.total ?? 0, available: foodsRes.showing ?? 0 };
         if (s.action === 'Spa') {
-          const members = spaRes?.['hydra:member'] ?? spaRes?.data ?? [];
+          const members = collectionOf(spaRes);
           return { ...s, count: members.length, available: members.filter((m: any) => m.status === 'Available').length };
         }
         return s;
@@ -127,10 +138,12 @@ const StaffDashboardScreen: FC = () => {
   const onRefresh = () => { setRefreshing(true); fetchStats(); };
 
   const quickActions: QuickAction[] = [
-    { icon: 'calendar',        label: 'Reservations', color: STAFF_ACCENT },
-    { icon: 'bed',             label: 'View Rooms',   color: '#2563eb' },
-    { icon: 'compass',         label: 'View Tours',   color: COLORS.primary },
-    { icon: 'food-fork-drink', label: 'View Foods',   color: '#059669' },
+    { icon: 'calendar',        label: 'Reservations',    color: STAFF_ACCENT,  route: 'StaffResTab' },
+    { icon: 'bed',             label: 'View Rooms',      color: '#2563eb',     route: 'StaffSvcTab', params: { screen: ROUTES.STAFF_SERVICES, params: { initialTab: 'Rooms' } } },
+    { icon: 'compass',         label: 'View Tours',      color: COLORS.primary, route: 'StaffSvcTab', params: { screen: ROUTES.STAFF_SERVICES, params: { initialTab: 'Tours' } } },
+    { icon: 'food-fork-drink', label: 'View Foods',      color: '#059669',     route: 'StaffSvcTab', params: { screen: ROUTES.STAFF_SERVICES, params: { initialTab: 'Food' } } },
+    { icon: 'gift',            label: 'View Packages',   color: '#7c3aed',     route: 'StaffSvcTab', params: { screen: ROUTES.STAFF_SERVICES, params: { initialTab: 'Packages' } } },
+    { icon: 'spa',             label: 'Spa & Wellness',  color: '#db2777',     route: 'StaffSvcTab', params: { screen: ROUTES.STAFF_SERVICES, params: { initialTab: 'Spa' } } },
   ];
 
   const initials = (data?.fullName || data?.username || 'S')
@@ -205,7 +218,13 @@ const StaffDashboardScreen: FC = () => {
           <Text style={styles.sectionTitle}>Quick Actions</Text>
         </View>
         <View style={styles.grid2}>
-          {quickActions.map(a => <ActionCard key={a.label} item={a} />)}
+          {quickActions.map(a => (
+            <ActionCard
+              key={a.label}
+              item={a}
+              onPress={() => navigation.navigate(a.route, a.params)}
+            />
+          ))}
         </View>
       </ScrollView>
     </View>
