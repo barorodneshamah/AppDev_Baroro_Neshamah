@@ -66,6 +66,9 @@ yarn-error.log
 # testing
 /coverage
 
+# Local assistant settings
+.claude/
+
 # Yarn
 .yarn/*
 !.yarn/patches
