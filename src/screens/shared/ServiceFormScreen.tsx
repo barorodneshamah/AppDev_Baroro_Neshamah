@@ -104,6 +104,53 @@ const FIELDS: Record<ServiceType, FieldConfig[]> = {
   ],
 };
 
+const DEFAULT_FORM_VALUES: Record<ServiceType, Record<string, string>> = {
+  Rooms: {
+    roomType: 'Standard',
+    pricePerNight: '0.00',
+    capacity: '2',
+    status: 'Available',
+  },
+  Tours: {
+    location: 'Palawan',
+    price: '0.00',
+    duration: '4 hours',
+    availableSlots: '10',
+    schedule: 'Daily',
+    status: 'Available',
+  },
+  Food: {
+    category: 'Main Course',
+    price: '0.00',
+    availableStock: '50',
+    status: 'Available',
+  },
+  Packages: {
+    discountPercentage: '0',
+    durationDays: '1',
+    durationNights: '0',
+    maxGuests: '1',
+    status: 'Active',
+  },
+  Spa: {
+    category: 'Massage',
+    price: '0.00',
+    duration: '60 minutes',
+    capacity: '5',
+    status: 'Available',
+  },
+};
+
+const REQUIRED_FIELDS: Record<ServiceType, string[]> = {
+  Rooms: ['roomNumber', 'roomType', 'pricePerNight', 'capacity', 'status'],
+  Tours: ['name', 'location', 'price', 'duration', 'availableSlots', 'status'],
+  Food: ['name', 'category', 'price', 'availableStock', 'status'],
+  Packages: ['name', 'packagePrice', 'durationDays', 'durationNights', 'maxGuests', 'status'],
+  Spa: ['name', 'category', 'price', 'duration', 'capacity', 'status'],
+};
+
+const POSITIVE_NUMBER_FIELDS = new Set(['capacity', 'availableSlots', 'availableStock', 'durationDays', 'maxGuests']);
+
 const UPLOAD_TYPES: Record<ServiceType, 'rooms' | 'tours' | 'foods' | 'packages' | 'spas'> = {
   Rooms: 'rooms',
   Tours: 'tours',
@@ -154,7 +201,10 @@ const ServiceFormScreen: FC<Props> = ({ accentColor }) => {
 
   const buildInitial = () => {
     const init: Record<string, string> = {};
-    FIELDS[type].forEach(f => { init[f.key] = passedItem ? String(passedItem[f.key] ?? '') : ''; });
+    const defaults = DEFAULT_FORM_VALUES[type];
+    FIELDS[type].forEach(f => {
+      init[f.key] = passedItem ? String(passedItem[f.key] ?? defaults[f.key] ?? '') : (defaults[f.key] ?? '');
+    });
     init.mainImage = passedItem ? String(passedItem?.mainImage ?? '') : '';
     return init;
   };
@@ -356,6 +406,38 @@ const ServiceFormScreen: FC<Props> = ({ accentColor }) => {
     return p;
   };
 
+  const validateBeforeSave = (payload: Record<string, any>) => {
+    for (const key of REQUIRED_FIELDS[type]) {
+      const value = payload[key];
+      if (value === undefined || value === null || value === '') {
+        const field = FIELDS[type].find(f => f.key === key);
+        return `${field?.label ?? key} is required.`;
+      }
+    }
+
+    for (const field of FIELDS[type].filter(f => f.numeric)) {
+      const value = payload[field.key];
+      if (value === undefined || value === null || value === '') continue;
+      if (!Number.isFinite(Number(value))) {
+        return `${field.label} must be a valid number.`;
+      }
+      if (POSITIVE_NUMBER_FIELDS.has(field.key) && Number(value) <= 0) {
+        return `${field.label} must be greater than 0.`;
+      }
+    }
+
+    if (payload.scheduleDate && !DATE_PATTERN.test(String(payload.scheduleDate))) {
+      return 'Schedule Date must use YYYY-MM-DD format.';
+    }
+
+    if (type === 'Packages') {
+      const selectedCount = packageSelected.roomIds.length + packageSelected.tourIds.length + packageSelected.foodIds.length;
+      if (selectedCount === 0) return 'Select at least one room, tour, or food item for the package.';
+    }
+
+    return null;
+  };
+
   const renderPackagePicker = () => {
     if (type !== 'Packages') return null;
     const groups: { key: PackageBucket; title: string; icon: string }[] = [
@@ -411,6 +493,12 @@ const ServiceFormScreen: FC<Props> = ({ accentColor }) => {
     setSaving(true);
     try {
       const payload = buildPayload();
+      const validationError = validateBeforeSave(payload);
+      if (validationError) {
+        Alert.alert('Missing details', validationError);
+        return;
+      }
+
       if (photo?.kind === 'gallery') {
         setUploadingPhoto(true);
         const imageUri = await uploadServiceImage(photo.uri, token, UPLOAD_TYPES[type], photo.fileName, photo.mimeType);

@@ -5,11 +5,13 @@ import {
   Platform, StatusBar, Modal, TextInput, ActivityIndicator,
   Alert, Image,
 } from 'react-native';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useDispatch, useSelector }  from 'react-redux';
 import { userLogout }                from '../app/reducers/auth';
-import { apiFetch }                  from '../app/api/api';
+import { apiFetch, changePassword }  from '../app/api/api';
 import { RootState }                 from '../store';
 import { COLORS, FONTS, RADIUS, SHADOW, SPACING, getRoleLabel, getRoleColor } from '../theme';
+import { SuccessModal, SuccessModalConfig, ConfirmModal, ConfirmModalConfig } from '../components/AppModals';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -64,44 +66,69 @@ interface EditModalProps {
 
 const EditModal: FC<EditModalProps> = ({
   visible, title, fields, values, onChange, onCancel, onSave, loading,
-}) => (
-  <Modal visible={visible} transparent animationType="slide">
-    <View style={styles.modalOverlay}>
-      <View style={styles.modalSheet}>
-        <View style={styles.modalHandle} />
-        <Text style={styles.modalTitle}>{title}</Text>
+}) => {
+  const [visibleSecure, setVisibleSecure] = useState<Record<string, boolean>>({});
 
-        {fields.map(f => (
-          <View key={f.key} style={styles.modalField}>
-            <Text style={styles.modalLabel}>{f.label}</Text>
-            <TextInput
-              style={styles.modalInput}
-              value={values[f.key] || ''}
-              onChangeText={v => onChange(f.key, v)}
-              secureTextEntry={f.secure}
-              keyboardType={f.keyboardType || 'default'}
-              autoCapitalize="none"
-              placeholderTextColor={COLORS.textMuted}
-              placeholder={`Enter ${f.label.toLowerCase()}`}
-            />
+  return (
+    <Modal visible={visible} transparent animationType="slide">
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalSheet}>
+          <View style={styles.modalHandle} />
+          <Text style={styles.modalTitle}>{title}</Text>
+
+          {fields.map(f => {
+            const canReveal = !!f.secure;
+            const revealed = !!visibleSecure[f.key];
+
+            return (
+              <View key={f.key} style={styles.modalField}>
+                <Text style={styles.modalLabel}>{f.label}</Text>
+                <View style={[styles.modalInputWrap, canReveal && styles.modalInputWithIcon]}>
+                  <TextInput
+                    style={styles.modalInput}
+                    value={values[f.key] || ''}
+                    onChangeText={v => onChange(f.key, v)}
+                    secureTextEntry={canReveal && !revealed}
+                    keyboardType={f.keyboardType || 'default'}
+                    autoCapitalize="none"
+                    placeholderTextColor={COLORS.textMuted}
+                    placeholder={`Enter ${f.label.toLowerCase()}`}
+                  />
+                  {canReveal && (
+                    <TouchableOpacity
+                      onPress={() => setVisibleSecure(prev => ({ ...prev, [f.key]: !prev[f.key] }))}
+                      style={styles.modalEyeBtn}
+                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                      activeOpacity={0.7}
+                    >
+                      <Icon name={revealed ? 'eye-off' : 'eye'} size={20} color={COLORS.textMuted} />
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+            );
+          })}
+
+          <View style={styles.modalActions}>
+            <TouchableOpacity style={styles.modalBtnCancel} onPress={onCancel}>
+              <Icon name="close" size={15} color={COLORS.textMuted} />
+              <Text style={styles.modalBtnCancelText}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.modalBtnSave} onPress={onSave} disabled={loading}>
+              {loading
+                ? <ActivityIndicator color="#fff" size="small" />
+                : <>
+                    <Icon name="check" size={15} color="#fff" />
+                    <Text style={styles.modalBtnSaveText}>Save Changes</Text>
+                  </>
+              }
+            </TouchableOpacity>
           </View>
-        ))}
-
-        <View style={styles.modalActions}>
-          <TouchableOpacity style={styles.modalBtnCancel} onPress={onCancel}>
-            <Text style={styles.modalBtnCancelText}>Cancel</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.modalBtnSave} onPress={onSave} disabled={loading}>
-            {loading
-              ? <ActivityIndicator color={COLORS.textLight} size="small" />
-              : <Text style={styles.modalBtnSaveText}>Save</Text>
-            }
-          </TouchableOpacity>
         </View>
       </View>
-    </View>
-  </Modal>
-);
+    </Modal>
+  );
+};
 
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 
@@ -112,6 +139,8 @@ const ProfileScreen: FC = () => {
   const [editModal,     setEditModal]     = useState(false);
   const [passwordModal, setPasswordModal] = useState(false);
   const [saving,        setSaving]        = useState(false);
+  const [successConfig, setSuccessConfig] = useState<SuccessModalConfig | null>(null);
+  const [logoutConfig,  setLogoutConfig]  = useState<ConfirmModalConfig | null>(null);
 
   const [profileForm, setProfileForm] = useState({
     fullName: data?.fullName || '',
@@ -120,7 +149,6 @@ const ProfileScreen: FC = () => {
   });
 
   const [passwordForm, setPasswordForm] = useState({
-    currentPassword: '',
     newPassword:     '',
     confirmPassword: '',
   });
@@ -155,8 +183,16 @@ const ProfileScreen: FC = () => {
         method: 'PUT',
         body:   JSON.stringify(profileForm),
       });
-      Alert.alert('Success', 'Profile updated successfully.');
       setEditModal(false);
+      setSuccessConfig({
+        icon:         'account-check',
+        iconBg:       '#e8f5e9',
+        iconColor:    '#2e7d32',
+        title:        'Profile Updated!',
+        message:      'Your profile information has been saved successfully.',
+        primaryLabel: 'Done',
+        onPrimary:    () => setSuccessConfig(null),
+      });
     } catch (e: any) {
       Alert.alert('Error', e.message || 'Could not update profile.');
     } finally {
@@ -165,7 +201,7 @@ const ProfileScreen: FC = () => {
   };
 
   const handleChangePassword = async () => {
-    if (!passwordForm.currentPassword || !passwordForm.newPassword) {
+    if (!passwordForm.newPassword || !passwordForm.confirmPassword) {
       Alert.alert('Validation', 'Please fill in all password fields.');
       return;
     }
@@ -179,13 +215,18 @@ const ProfileScreen: FC = () => {
     }
     setSaving(true);
     try {
-      await apiFetch(`/api/users/${userId}`, token, {
-        method: 'PUT',
-        body:   JSON.stringify({ password: passwordForm.newPassword }),
-      });
-      Alert.alert('Success', 'Password changed successfully.');
+      await changePassword(passwordForm, token);
       setPasswordModal(false);
-      setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+      setPasswordForm({ newPassword: '', confirmPassword: '' });
+      setSuccessConfig({
+        icon:         'lock-check',
+        iconBg:       '#e3f2fd',
+        iconColor:    '#1565c0',
+        title:        'Password Changed!',
+        message:      'Your password has been updated. Keep it safe!',
+        primaryLabel: 'Done',
+        onPrimary:    () => setSuccessConfig(null),
+      });
     } catch (e: any) {
       Alert.alert('Error', e.message || 'Could not change password.');
     } finally {
@@ -194,16 +235,18 @@ const ProfileScreen: FC = () => {
   };
 
   // Logout — dispatch to Redux, wipes token + data in one shot, no AsyncStorage
-  const handleLogout = () => {
-    Alert.alert('Log Out', 'Are you sure you want to log out?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text:    'Log Out',
-        style:   'destructive',
-        onPress: () => dispatch(userLogout()),
-      },
-    ]);
-  };
+  const handleLogout = () => setLogoutConfig({
+    icon:         'logout-variant',
+    iconBg:       '#fce4ec',
+    iconColor:    '#c62828',
+    title:        'Sign Out?',
+    message:      'Are you sure you want to sign out of your account? You can always log back in.',
+    confirmLabel: 'Sign Out',
+    cancelLabel:  'Stay',
+    dangerous:    true,
+    onCancel:     () => setLogoutConfig(null),
+    onConfirm:    () => { setLogoutConfig(null); dispatch(userLogout()); },
+  });
 
   // ── Render ────────────────────────────────────────────────────────────────────
 
@@ -276,7 +319,6 @@ const ProfileScreen: FC = () => {
         visible={passwordModal}
         title="Change Password"
         fields={[
-          { label: 'Current Password', key: 'currentPassword', secure: true },
           { label: 'New Password',     key: 'newPassword',     secure: true },
           { label: 'Confirm Password', key: 'confirmPassword', secure: true },
         ]}
@@ -286,6 +328,12 @@ const ProfileScreen: FC = () => {
         onSave={handleChangePassword}
         loading={saving}
       />
+
+      {/* Logout Confirmation */}
+      <ConfirmModal config={logoutConfig} />
+
+      {/* Success feedback */}
+      <SuccessModal config={successConfig} />
     </View>
   );
 };
@@ -397,22 +445,30 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     marginBottom:  SPACING.xs,
   },
-  modalInput: {
+  modalInputWrap: {
     backgroundColor:   COLORS.surfaceAlt,
     borderRadius:      RADIUS.md,
     paddingHorizontal: SPACING.md,
     height:            48,
-    fontSize:          15,
-    fontFamily:        FONTS.body,
-    color:             COLORS.textDark,
     borderWidth:       1,
     borderColor:       COLORS.border,
+    flexDirection:     'row',
+    alignItems:        'center',
   },
-  modalActions:       { flexDirection: 'row', gap: SPACING.sm, marginTop: SPACING.md },
-  modalBtnCancel:     { flex: 1, height: 48, borderRadius: RADIUS.md, borderWidth: 1.5, borderColor: COLORS.border, justifyContent: 'center', alignItems: 'center' },
-  modalBtnCancelText: { color: COLORS.textMuted, fontSize: 15, fontFamily: FONTS.bold, fontWeight: '600' },
-  modalBtnSave:       { flex: 1, height: 48, borderRadius: RADIUS.md, backgroundColor: COLORS.primary, justifyContent: 'center', alignItems: 'center', ...SHADOW.brand },
-  modalBtnSaveText:   { color: COLORS.textLight, fontSize: 15, fontFamily: FONTS.bold, fontWeight: '600' },
+  modalInputWithIcon: { paddingRight: SPACING.sm },
+  modalInput: {
+    flex: 1,
+    height: '100%',
+    fontSize: 15,
+    fontFamily: FONTS.body,
+    color: COLORS.textDark,
+  },
+  modalEyeBtn: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center' },
+  modalActions:       { flexDirection: 'row', gap: SPACING.sm, marginTop: SPACING.lg },
+  modalBtnCancel:     { flex: 1, height: 52, flexDirection: 'row', gap: 6, borderRadius: RADIUS.full, borderWidth: 1.5, borderColor: COLORS.border, backgroundColor: COLORS.surfaceAlt, justifyContent: 'center', alignItems: 'center' },
+  modalBtnCancelText: { color: COLORS.textMuted, fontSize: 14, fontFamily: FONTS.bold, fontWeight: '600' },
+  modalBtnSave:       { flex: 1, height: 52, flexDirection: 'row', gap: 6, borderRadius: RADIUS.full, backgroundColor: COLORS.primary, justifyContent: 'center', alignItems: 'center', ...SHADOW.brand },
+  modalBtnSaveText:   { color: '#fff', fontSize: 14, fontFamily: FONTS.bold, fontWeight: '700' },
 });
 
 export default ProfileScreen;

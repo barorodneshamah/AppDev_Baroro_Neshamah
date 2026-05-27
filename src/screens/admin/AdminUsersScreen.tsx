@@ -12,6 +12,16 @@ import { RootState } from '../../store';
 import { getUsers, deleteUser } from '../../app/api/api';
 import { COLORS, FONTS, SHADOW, RADIUS, getRoleColor, getRoleLabel } from '../../theme';
 import ROUTES from '../../utils';
+import { ConfirmModal, ConfirmModalConfig } from '../../components/AppModals';
+
+const collectionOf = (response: any): any[] => {
+  if (Array.isArray(response)) return response;
+  if (Array.isArray(response?.['hydra:member'])) return response['hydra:member'];
+  if (Array.isArray(response?.member)) return response.member;
+  if (Array.isArray(response?.data)) return response.data;
+  if (Array.isArray(response?.items)) return response.items;
+  return [];
+};
 
 const AdminUsersScreen: FC = () => {
   const navigation = useNavigation<any>();
@@ -21,11 +31,12 @@ const AdminUsersScreen: FC = () => {
   const [loading, setLoading]     = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch]       = useState('');
+  const [deleteConfig, setDeleteConfig] = useState<ConfirmModalConfig | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
       const res = await getUsers(token);
-      setList(res['hydra:member'] ?? res.data ?? res ?? []);
+      setList(collectionOf(res));
     } catch (e) { console.error('[AdminUsers]', e); }
     finally { setLoading(false); setRefreshing(false); }
   }, [token]);
@@ -33,15 +44,22 @@ const AdminUsersScreen: FC = () => {
   useFocusEffect(useCallback(() => { fetchData(); }, [fetchData]));
 
   const handleDelete = (user: any) => {
-    Alert.alert('Delete User', `Delete "${user.username}"? This cannot be undone.`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete', style: 'destructive', onPress: async () => {
-          try { await deleteUser(user.id, token); fetchData(); }
-          catch (e: any) { Alert.alert('Error', e.message); }
-        },
+    setDeleteConfig({
+      icon:         'account-remove-outline',
+      iconBg:       COLORS.errorFaded,
+      iconColor:    COLORS.error,
+      title:        'Delete User?',
+      message:      `Delete "${user.username}"? This cannot be undone.`,
+      confirmLabel: 'Delete',
+      cancelLabel:  'Cancel',
+      dangerous:    true,
+      onCancel:     () => setDeleteConfig(null),
+      onConfirm:    async () => {
+        setDeleteConfig(null);
+        try { await deleteUser(user.id, token); fetchData(); }
+        catch (e: any) { Alert.alert('Error', e.message); }
       },
-    ]);
+    });
   };
 
   const filtered = list.filter(u =>
@@ -122,6 +140,7 @@ const AdminUsersScreen: FC = () => {
             renderItem={renderItem}
           />
       }
+      <ConfirmModal config={deleteConfig} />
     </View>
   );
 };

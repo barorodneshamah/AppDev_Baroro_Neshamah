@@ -1,10 +1,21 @@
 // src/config/firebase.ts
-import analytics from '@react-native-firebase/analytics';
-import crashlytics from '@react-native-firebase/crashlytics';
+import {
+  getAnalytics,
+  logEvent as firebaseLogEvent,
+  logScreenView,
+} from '@react-native-firebase/analytics';
+import {
+  getCrashlytics,
+  log as crashlyticsLog,
+  recordError as crashlyticsRecordError,
+  setUserId,
+} from '@react-native-firebase/crashlytics';
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import API_BASE_URL from './api.config';
 
 const GOOGLE_WEB_CLIENT_ID = '9775216433-s460m29pgodjk0dpla09aled3esfujlu.apps.googleusercontent.com';
+const analytics = getAnalytics();
+const crashlytics = getCrashlytics();
 
 export { API_BASE_URL };
 
@@ -128,7 +139,7 @@ export const getCurrentGoogleUser = async () => {
 
 export const logEvent = async (eventName: string, params?: Record<string, any>) => {
   try {
-    await analytics().logEvent(eventName, params);
+    await firebaseLogEvent(analytics, eventName, params);
   } catch (error) {
     console.error('Analytics error:', error);
   }
@@ -136,7 +147,7 @@ export const logEvent = async (eventName: string, params?: Record<string, any>) 
 
 export const logScreen = async (screenName: string) => {
   try {
-    await analytics().logScreenView({
+    await logScreenView(analytics, {
       screen_name: screenName,
       screen_class: screenName,
     });
@@ -146,15 +157,15 @@ export const logScreen = async (screenName: string) => {
 };
 
 export const logCrashlytics = (message: string) => {
-  crashlytics().log(message);
+  crashlyticsLog(crashlytics, message);
 };
 
 export const recordError = (error: Error, jsErrorName?: string) => {
-  crashlytics().recordError(error, jsErrorName);
+  crashlyticsRecordError(crashlytics, error, jsErrorName);
 };
 
 export const setUserForCrashlytics = (userId: string) => {
-  crashlytics().setUserId(userId);
+  setUserId(crashlytics, userId);
 };
 
 export { analytics, crashlytics, GoogleSignin };

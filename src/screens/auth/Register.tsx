@@ -16,6 +16,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { ROUTES } from '../../utils';
 import { userRegister, resetRegister } from '../../app/reducers/auth';
+import { ValidationModal } from '../../components/AppModals';
 
 const LogoImg = require('../../../images/3.png');
 
@@ -36,7 +37,7 @@ const Register: FC = () => {
 
   const navigation = useNavigation<NavigationProp<any>>();
   const dispatch   = useDispatch();
-  const { isLoading, isError, isSuccess } = useSelector(
+  const { isLoading, isError, isSuccess, errorMessage } = useSelector(
     (state: any) => state.auth.register,
   );
 
@@ -117,7 +118,7 @@ const Register: FC = () => {
           </View>
 
           {isError && (
-            <Text style={styles.errorText}>Registration failed. Try again.</Text>
+            <Text style={styles.errorText}>{errorMessage ?? 'Registration failed. Try again.'}</Text>
           )}
 
           <TouchableOpacity

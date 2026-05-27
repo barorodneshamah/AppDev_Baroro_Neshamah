@@ -253,7 +253,7 @@ export const createUser  = (payload: object, token?: string | null) => apiPost('
 export const updateUser  = (id: number, payload: object, token?: string | null) =>
   apiFetch(`/api/admin/users/${id}`, token, { method: 'PUT', body: JSON.stringify(payload) });
 export const deleteUser  = (id: number, token?: string | null) =>
-  apiFetch(`/api/users/${id}`, token, { method: 'DELETE' });
+  apiFetch(`/api/admin/users/${id}`, token, { method: 'DELETE' });
 
 // ─── Room CRUD ────────────────────────────────────────────────────────────────
 

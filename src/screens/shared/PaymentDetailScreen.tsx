@@ -12,6 +12,7 @@ import { RootState } from '../../store';
 import { getPayment, approvePayment, rejectPayment, refundPayment } from '../../app/api/api';
 import { addNotification } from '../../app/reducers/notifications';
 import { COLORS, FONTS, SHADOW, RADIUS } from '../../theme';
+import { ConfirmModal, ConfirmModalConfig } from '../../components/AppModals';
 
 interface Props { accentColor: string; }
 
@@ -40,6 +41,7 @@ const PaymentDetailScreen: FC<Props> = ({ accentColor }) => {
   const [item, setItem]       = useState<any>(passed ?? null);
   const [loading, setLoading] = useState(!passed);
   const [busy, setBusy]       = useState(false);
+  const [actionConfig, setActionConfig] = useState<ConfirmModalConfig | null>(null);
 
   // Reject modal (cross-platform replacement for Alert.prompt)
   const [rejectModal,  setRejectModal]  = useState(false);
@@ -59,23 +61,31 @@ const PaymentDetailScreen: FC<Props> = ({ accentColor }) => {
   }, [id, token, passed]);
 
   const doAction = (label: string, fn: () => Promise<any>, onSuccess?: () => void) => {
-    Alert.alert(label, `Confirm: ${label} this payment?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: label, onPress: async () => {
-          setBusy(true);
-          try {
-            await fn();
-            await reload();
-            onSuccess?.();
-          } catch (e: any) {
-            Alert.alert('Error', e.message);
-          } finally {
-            setBusy(false);
-          }
-        },
+    const isRefund = label.toLowerCase().includes('refund');
+    const color = isRefund ? COLORS.info : COLORS.success;
+    setActionConfig({
+      icon:         isRefund ? 'cash-refund' : 'check-circle-outline',
+      iconBg:       color + '18',
+      iconColor:    color,
+      title:        `${label} Payment?`,
+      message:      `Confirm ${label.toLowerCase()} for this payment?`,
+      confirmLabel: label,
+      cancelLabel:  'Cancel',
+      onCancel:     () => setActionConfig(null),
+      onConfirm:    async () => {
+        setActionConfig(null);
+        setBusy(true);
+        try {
+          await fn();
+          await reload();
+          onSuccess?.();
+        } catch (e: any) {
+          Alert.alert('Error', e.message);
+        } finally {
+          setBusy(false);
+        }
       },
-    ]);
+    });
   };
 
   const openRejectModal = () => {
@@ -109,7 +119,8 @@ const PaymentDetailScreen: FC<Props> = ({ accentColor }) => {
     }
   };
 
-  const statusColor = STATUS_COLOR[item?.status] ?? COLORS.textMuted;
+  const normalizedStatus = String(item?.status ?? '').toUpperCase();
+  const statusColor = STATUS_COLOR[normalizedStatus] ?? COLORS.textMuted;
 
   if (loading) return <ActivityIndicator color={accentColor} style={{ marginTop: 80 }} />;
 
@@ -129,7 +140,7 @@ const PaymentDetailScreen: FC<Props> = ({ accentColor }) => {
       <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
         <View style={[styles.statusBanner, { backgroundColor: statusColor + '18' }]}>
           <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
-          <Text style={[styles.statusText, { color: statusColor }]}>{item?.status}</Text>
+          <Text style={[styles.statusText, { color: statusColor }]}>{normalizedStatus || item?.status}</Text>
           <Text style={styles.statusAmount}>₱{item?.amount}</Text>
         </View>
 
@@ -137,7 +148,7 @@ const PaymentDetailScreen: FC<Props> = ({ accentColor }) => {
           <Row label="Transaction Ref"  value={item?.transactionReference} />
           <Row label="Payment Method"   value={item?.paymentMethod} />
           <Row label="Amount"           value={`₱${item?.amount}`} />
-          <Row label="Status"           value={item?.status} />
+          <Row label="Status"           value={normalizedStatus || item?.status} />
           <Row label="Paid By"          value={item?.paidBy?.fullName || item?.paidBy?.username} />
           <Row label="Approved By"      value={item?.approvedBy?.fullName || item?.approvedBy?.username} />
           <Row label="Approved At"      value={item?.approvedAt?.slice(0, 10)} />
@@ -149,7 +160,7 @@ const PaymentDetailScreen: FC<Props> = ({ accentColor }) => {
         {busy
           ? <ActivityIndicator color={accentColor} style={{ marginVertical: 16 }} />
           : <View style={styles.actions}>
-              {item?.status === 'PENDING' && (
+              {normalizedStatus === 'PENDING' && (
                 <>
                   <TouchableOpacity
                     style={[styles.actionBtn, { backgroundColor: COLORS.success }]}
@@ -167,13 +178,13 @@ const PaymentDetailScreen: FC<Props> = ({ accentColor }) => {
                   </TouchableOpacity>
                 </>
               )}
-              {item?.status === 'APPROVED' && (
+              {normalizedStatus === 'APPROVED' && (
                 <TouchableOpacity
                   style={[styles.actionBtn, { backgroundColor: COLORS.info }]}
-                  onPress={() => doAction('Refund', () => refundPayment(id, token))}
+                  onPress={() => doAction('Approve Refund', () => refundPayment(id, token))}
                 >
                   <Icon name="cash-refund" size={16} color="#fff" />
-                  <Text style={styles.actionBtnText}>Refund</Text>
+                  <Text style={styles.actionBtnText}>Approve Refund</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -192,6 +203,9 @@ const PaymentDetailScreen: FC<Props> = ({ accentColor }) => {
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
           <View style={styles.modalBox}>
+            <View style={styles.modalIconWrap}>
+              <Icon name="alert-circle-outline" size={36} color={COLORS.error} />
+            </View>
             <Text style={styles.modalTitle}>Reject Payment</Text>
             <Text style={styles.modalSub}>
               Payment of <Text style={{ fontFamily: FONTS.bold, color: COLORS.textDark }}>
@@ -214,19 +228,21 @@ const PaymentDetailScreen: FC<Props> = ({ accentColor }) => {
                 style={[styles.modalBtn, styles.modalBtnCancel]}
                 onPress={() => setRejectModal(false)}
               >
+                <Icon name="close" size={14} color={COLORS.textMuted} />
                 <Text style={styles.modalBtnCancelText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.modalBtn, { backgroundColor: COLORS.error }]}
+                style={[styles.modalBtn, styles.modalBtnReject]}
                 onPress={confirmReject}
               >
-                <Icon name="close" size={15} color="#fff" />
+                <Icon name="close-circle" size={16} color="#fff" />
                 <Text style={styles.modalBtnText}>Confirm Reject</Text>
               </TouchableOpacity>
             </View>
           </View>
         </KeyboardAvoidingView>
       </Modal>
+      <ConfirmModal config={actionConfig} />
     </View>
   );
 };
@@ -260,20 +276,22 @@ const styles = StyleSheet.create({
   actionBtnText: { color: '#fff', fontSize: 13, fontWeight: '700', fontFamily: FONTS.bold },
 
   // Reject modal
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 24 },
-  modalBox:     { width: '100%', backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: 24, ...SHADOW.md },
-  modalTitle:   { fontSize: 18, fontFamily: FONTS.bold, fontWeight: '700', color: COLORS.textDark, marginBottom: 6 },
-  modalSub:     { fontSize: 13, fontFamily: FONTS.body, color: COLORS.textMuted, marginBottom: 16, lineHeight: 18 },
-  modalLabel:   { fontSize: 12, fontFamily: FONTS.bold, fontWeight: '700', color: COLORS.textDark, marginBottom: 6 },
-  modalInput:   {
+  modalOverlay:  { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', alignItems: 'center', padding: 24 },
+  modalBox:      { width: '100%', backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: 24, ...SHADOW.md },
+  modalIconWrap: { width: 68, height: 68, borderRadius: 34, backgroundColor: COLORS.error + '14', justifyContent: 'center', alignItems: 'center', alignSelf: 'center', marginBottom: 14 },
+  modalTitle:    { fontSize: 18, fontFamily: FONTS.bold, fontWeight: '700', color: COLORS.textDark, marginBottom: 6, textAlign: 'center' },
+  modalSub:      { fontSize: 13, fontFamily: FONTS.body, color: COLORS.textMuted, marginBottom: 16, lineHeight: 18, textAlign: 'center' },
+  modalLabel:    { fontSize: 12, fontFamily: FONTS.bold, fontWeight: '700', color: COLORS.textDark, marginBottom: 6 },
+  modalInput:    {
     backgroundColor: COLORS.background, borderRadius: RADIUS.md,
-    borderWidth: 1, borderColor: COLORS.border,
+    borderWidth: 1.5, borderColor: COLORS.border,
     padding: 12, fontSize: 14, fontFamily: FONTS.body, color: COLORS.textDark,
     minHeight: 80, textAlignVertical: 'top', marginBottom: 20,
   },
   modalActions:      { flexDirection: 'row', gap: 10 },
-  modalBtn:          { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, padding: 13, borderRadius: RADIUS.md },
-  modalBtnCancel:    { backgroundColor: COLORS.surfaceAlt, borderWidth: 1, borderColor: COLORS.border },
+  modalBtn:          { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, height: 52, borderRadius: RADIUS.full },
+  modalBtnCancel:    { backgroundColor: COLORS.surfaceAlt, borderWidth: 1.5, borderColor: COLORS.border },
+  modalBtnReject:    { backgroundColor: COLORS.error },
   modalBtnCancelText:{ fontSize: 14, fontFamily: FONTS.bold, color: COLORS.textMuted },
   modalBtnText:      { fontSize: 14, fontFamily: FONTS.bold, fontWeight: '700', color: '#fff' },
 });

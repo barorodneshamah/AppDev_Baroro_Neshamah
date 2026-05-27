@@ -1,6 +1,7 @@
 // src/utils/index.ts
 export const ROUTES = {
   // Auth
+  LANDING:         'Landing',
   LOGIN:           'Login',
   REGISTER:        'Register',
   FORGOT_PASSWORD: 'ForgotPassword',
@@ -41,6 +42,7 @@ export const ROUTES = {
   // ── Notifications ─────────────────────────────────────────────────────────
   NOTIFICATIONS: 'Notifications',
   MESSAGES:      'Messages',
+  SHARE_WALL:    'ShareWall',
 
   // ── Customer service detail ───────────────────────────────────────────────
   SERVICE_DETAIL: 'ServiceDetail',
@@ -58,6 +60,8 @@ export const ROUTES = {
   PACKAGE_LIST:   'PackageList',
   PACKAGE_DETAIL: 'PackageDetail',
   PACKAGE_FORM:   'PackageForm',
+  SPA_DETAIL:     'SpaDetail',
+  SPA_FORM:       'SpaForm',
 };
 
 export default ROUTES;

@@ -9,19 +9,33 @@ import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { useSelector } from 'react-redux';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { COLORS, FONTS, RADIUS, SHADOW, SPACING } from '../theme';
-import { getPackage, getItemReviews } from '../app/api/api';
+import { getRoom, getTour, getPackage, getFood, getSpaService, getItemReviews } from '../app/api/api';
 import { RootState } from '../store';
 import ROUTES from '../utils';
+import API_BASE_URL from '../config/api.config';
 
 const { width, height } = Dimensions.get('window');
-const API_BASE = 'http://192.168.254.138:8000';
+const API_BASE = API_BASE_URL;
 
 type ServiceType = 'room' | 'tour' | 'package' | 'food' | 'spa';
 
-const resolveImage = (path?: string, seed = 'item'): string => {
+const UPLOAD_DIR: Record<string, string> = {
+  room:    'uploads/rooms',
+  tour:    'uploads/tours',
+  food:    'uploads/foods',
+  package: 'uploads/packages',
+  spa:     'uploads/spas',
+};
+
+const resolveImage = (path?: string, seed = 'item', serviceType?: string): string => {
   if (!path) return `https://picsum.photos/seed/${seed}/800/500`;
-  if (path.startsWith('http')) return path;
-  return `${API_BASE}${path}`;
+  if (path.startsWith('http')) {
+    return path.replace(/https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/, API_BASE);
+  }
+  if (path.startsWith('/')) return `${API_BASE}${path}`;
+  if (path.startsWith('uploads/')) return `${API_BASE}/${path}`;
+  if (serviceType && UPLOAD_DIR[serviceType]) return `${API_BASE}/${UPLOAD_DIR[serviceType]}/${path}`;
+  return `${API_BASE}/uploads/${path}`;
 };
 
 const formatPrice = (price?: string | number): string => {
@@ -99,27 +113,30 @@ const Stars: FC<{ rating: number; size?: number; interactive?: boolean; onRate?:
 
 // ─── Review card ──────────────────────────────────────────────────────────────
 
-const ReviewCard: FC<{ review: any }> = ({ review }) => (
-  <View style={styles.reviewCard}>
-    <View style={styles.reviewHeader}>
-      <View style={styles.reviewAvatar}>
-        <Text style={styles.reviewAvatarText}>
-          {(review.reviewer?.username ?? review.reviewer?.fullName ?? 'G')[0].toUpperCase()}
+const ReviewCard: FC<{ review: any }> = ({ review }) => {
+  // Support both API Platform format (reviewer.username) and wall-post format (authorName)
+  const name    = review.reviewer?.fullName ?? review.reviewer?.username ?? review.authorName ?? 'Guest';
+  const initial = name[0].toUpperCase();
+  const rating  = review.rating ?? 5;
+  const comment = review.comment ?? review.caption ?? '';
+  return (
+    <View style={styles.reviewCard}>
+      <View style={styles.reviewHeader}>
+        <View style={styles.reviewAvatar}>
+          <Text style={styles.reviewAvatarText}>{initial}</Text>
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.reviewName}>{name}</Text>
+          <Stars rating={rating} size={13} />
+        </View>
+        <Text style={styles.reviewDate}>
+          {review.createdAt ? new Date(review.createdAt).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' }) : ''}
         </Text>
       </View>
-      <View style={{ flex: 1 }}>
-        <Text style={styles.reviewName}>
-          {review.reviewer?.fullName ?? review.reviewer?.username ?? 'Guest'}
-        </Text>
-        <Stars rating={review.rating ?? 0} size={13} />
-      </View>
-      <Text style={styles.reviewDate}>
-        {review.createdAt ? new Date(review.createdAt).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' }) : ''}
-      </Text>
+      {comment ? <Text style={styles.reviewText}>{comment}</Text> : null}
     </View>
-    {review.comment ? <Text style={styles.reviewText}>{review.comment}</Text> : null}
-  </View>
-);
+  );
+};
 
 // ─── Package include card ─────────────────────────────────────────────────────
 
@@ -128,7 +145,7 @@ const IncludeCard: FC<{ item: any; type: 'room' | 'tour' | 'food' }> = ({ item, 
   const color = type === 'room' ? '#1565c0' : type === 'tour' ? '#2e7d32' : '#e65100';
   return (
     <View style={styles.includeCard}>
-      <Image source={{ uri: resolveImage(item.mainImage, `${type}${item.id}`) }} style={styles.includeImage} />
+      <Image source={{ uri: resolveImage(item.mainImage, `${type}${item.id}`, type) }} style={styles.includeImage} />
       <View style={[styles.includeTypePill, { backgroundColor: color }]}>
         <Icon name={icon} size={8} color="#fff" />
         <Text style={styles.includeTypeText}>{type.charAt(0).toUpperCase() + type.slice(1)}</Text>
@@ -149,18 +166,26 @@ const ServiceDetailScreen: FC = () => {
   const { token }  = useSelector((state: RootState) => state.auth);
   const { item, type } = route.params as { item: any; type: ServiceType };
 
-  const [pkgDetail,   setPkgDetail]   = useState<any>(null);
-  const [pkgLoading,  setPkgLoading]  = useState(false);
+  const [fullDetail,  setFullDetail]  = useState<any>(null);
+  const [detLoading,  setDetLoading]  = useState(false);
   const [reviews,     setReviews]     = useState<any[]>([]);
   const [revLoading,  setRevLoading]  = useState(false);
   const [selImg,      setSelImg]      = useState(0);
 
-  // Fetch package details
+  // Fetch full item details for ALL types so images array is populated
   useEffect(() => {
-    if (type === 'package' && item?.id) {
-      setPkgLoading(true);
-      getPackage(item.id, token).then(setPkgDetail).catch(() => {}).finally(() => setPkgLoading(false));
-    }
+    if (!item?.id) return;
+    const FETCHERS: Record<string, () => Promise<any>> = {
+      room:    () => getRoom(item.id, token),
+      tour:    () => getTour(item.id, token),
+      package: () => getPackage(item.id, token),
+      food:    () => getFood(item.id, token),
+      spa:     () => getSpaService(item.id, token),
+    };
+    const fn = FETCHERS[type];
+    if (!fn) return;
+    setDetLoading(true);
+    fn().then(setFullDetail).catch(() => {}).finally(() => setDetLoading(false));
   }, [type, item?.id, token]);
 
   // Fetch reviews
@@ -168,12 +193,12 @@ const ServiceDetailScreen: FC = () => {
     if (!item?.id) return;
     setRevLoading(true);
     getItemReviews(type, item.id, token)
-      .then(res => setReviews(res?.['hydra:member'] ?? res?.data ?? (Array.isArray(res) ? res : [])))
+      .then(res => setReviews(res?.reviews ?? res?.['hydra:member'] ?? res?.data ?? (Array.isArray(res) ? res : [])))
       .catch(() => setReviews([]))
       .finally(() => setRevLoading(false));
   }, [type, item?.id, token]);
 
-  const detail    = type === 'package' ? (pkgDetail ?? item) : item;
+  const detail    = fullDetail ?? item;
   const isBookable= type === 'room' || type === 'tour' || type === 'package' || type === 'spa';
 
   const price = type === 'room'    ? (detail?.pricePerNight || detail?.price)
@@ -181,12 +206,28 @@ const ServiceDetailScreen: FC = () => {
               : detail?.price;
   const priceLabel = type === 'room' ? '/night' : type === 'tour' ? '/pax' : type === 'spa' ? '/session' : '';
 
-  // Build image list
+  // Build image list — galleryImages (API Platform) or images/gallery/photos fallbacks
   const imageList: string[] = (() => {
-    const raw: string[] = detail?.images ?? detail?.gallery ?? [];
+    const extractUrl = (img: any): string | null => {
+      if (typeof img === 'string') return img;
+      return img?.imagePath ?? img?.url ?? img?.path ?? img?.image ?? null;
+    };
+    const rawItems: any[] = detail?.galleryImages ?? detail?.images ?? detail?.gallery ?? detail?.photos ?? [];
+    const raw = rawItems.map(extractUrl).filter(Boolean) as string[];
     const main = detail?.image || detail?.mainImage;
-    const all  = main ? [main, ...raw.filter((u: string) => u !== main)] : raw;
-    return all.length ? all.map(u => resolveImage(u, `${type}${item?.id}`)) : [resolveImage(main, `${type}${item?.id}`)];
+    const all  = main ? [main, ...raw.filter(u => u !== main)] : raw;
+    return all.length
+      ? all.map(u => resolveImage(u, `${type}${item?.id}`, type))
+      : [resolveImage(main, `${type}${item?.id}`, type)];
+  })();
+
+  // Amenities: from ServiceApiController array or from API Platform features string
+  const amenities: string[] = (() => {
+    if (Array.isArray(detail?.amenities) && detail.amenities.length > 0) return detail.amenities;
+    if (typeof detail?.features === 'string' && detail.features.trim()) {
+      return detail.features.split(',').map((s: string) => s.trim()).filter(Boolean);
+    }
+    return [];
   })();
 
   const avgRating = reviews.length
@@ -329,6 +370,18 @@ const ServiceDetailScreen: FC = () => {
             </View>
           ) : null}
 
+          {/* Amenities */}
+          {amenities.length > 0 && (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Amenities</Text>
+              <View style={styles.chips}>
+                {amenities.map((a, i) => (
+                  <Chip key={i} icon="check-circle-outline" label={a} />
+                ))}
+              </View>
+            </View>
+          )}
+
           {/* Details */}
           {rows.length > 0 && (
             <View style={styles.section}>
@@ -345,7 +398,7 @@ const ServiceDetailScreen: FC = () => {
           {type === 'package' && (
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>What's Included</Text>
-              {pkgLoading ? (
+              {detLoading ? (
                 <ActivityIndicator color={COLORS.primary} style={{ marginTop: 16 }} />
               ) : !hasIncludes ? (
                 <View style={styles.noIncludes}>

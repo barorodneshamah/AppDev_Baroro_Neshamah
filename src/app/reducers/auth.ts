@@ -10,6 +10,7 @@ interface RegisterState {
   isLoading: boolean;
   isError: boolean;
   isSuccess: boolean;
+  errorMessage: string | null;
 }
 
 interface AuthState {
@@ -35,6 +36,7 @@ const INITIAL_STATE: AuthState = {
     isLoading: false,
     isError: false,
     isSuccess: false,
+    errorMessage: null,
   },
 };
 
@@ -59,13 +61,13 @@ export default function reducer(state = INITIAL_STATE, action: AuthAction): Auth
       return INITIAL_STATE;
 
     case USER_REGISTER_REQUEST:
-      return { ...state, register: { isLoading: true, isError: false, isSuccess: false } };
+      return { ...state, register: { isLoading: true, isError: false, isSuccess: false, errorMessage: null } };
     case USER_REGISTER_COMPLETED:
-      return { ...state, register: { isLoading: false, isError: false, isSuccess: true } };
+      return { ...state, register: { isLoading: false, isError: false, isSuccess: true, errorMessage: null } };
     case USER_REGISTER_ERROR:
-      return { ...state, register: { isLoading: false, isError: true, isSuccess: false } };
+      return { ...state, register: { isLoading: false, isError: true, isSuccess: false, errorMessage: action.payload ?? 'Registration failed' } };
     case USER_REGISTER_RESET:
-      return { ...state, register: { isLoading: false, isError: false, isSuccess: false } };
+      return { ...state, register: { isLoading: false, isError: false, isSuccess: false, errorMessage: null } };
 
     default:
       return state;

@@ -3,12 +3,14 @@ import React, { FC, useCallback, useState } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
   ActivityIndicator, RefreshControl, Platform, StatusBar,
+  Alert,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
-import { useSelector } from 'react-redux';
+import { useSelector, useDispatch } from 'react-redux';
 import { RootState } from '../../store';
-import { getReservations } from '../../app/api/api';
+import { getReservations, isAuthError } from '../../app/api/api';
+import { userLogout } from '../../app/reducers/auth';
 import { COLORS, FONTS, SHADOW, RADIUS } from '../../theme';
 
 type FetchFn = (token?: string | null) => Promise<any>;
@@ -30,6 +32,7 @@ const FILTERS = ['ALL', 'PENDING', 'CONFIRMED', 'COMPLETED', 'CANCELLED'];
 
 const ReservationsScreen: FC<Props> = ({ accentColor, detailRoute, fetchFn }) => {
   const navigation          = useNavigation<any>();
+  const dispatch = useDispatch();
   const { token }           = useSelector((state: RootState) => state.auth);
 
   const [list, setList]         = useState<any[]>([]);
@@ -47,6 +50,11 @@ const ReservationsScreen: FC<Props> = ({ accentColor, detailRoute, fetchFn }) =>
       setList(res['hydra:member'] ?? res.data ?? res ?? []);
     } catch (e: any) {
       console.error('[Reservations]', e);
+      if (isAuthError(e)) {
+        dispatch(userLogout());
+        Alert.alert('Session expired', 'Please log in again to continue.');
+        return;
+      }
       setFetchError(e.message ?? 'Failed to load reservations');
     } finally {
       setLoading(false);

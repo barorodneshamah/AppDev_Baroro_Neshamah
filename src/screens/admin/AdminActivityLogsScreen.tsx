@@ -21,6 +21,15 @@ const ACTION_META: Record<string, { color: string; icon: string }> = {
   DELETE:  { color: COLORS.error,   icon: 'delete-circle-outline' },
 };
 
+const collectionOf = (response: any): any[] => {
+  if (Array.isArray(response)) return response;
+  if (Array.isArray(response?.['hydra:member'])) return response['hydra:member'];
+  if (Array.isArray(response?.member)) return response.member;
+  if (Array.isArray(response?.data)) return response.data;
+  if (Array.isArray(response?.items)) return response.items;
+  return [];
+};
+
 const AdminActivityLogsScreen: FC = () => {
   const navigation = useNavigation<any>();
   const { token }  = useSelector((state: RootState) => state.auth);
@@ -33,7 +42,7 @@ const AdminActivityLogsScreen: FC = () => {
   const fetchData = useCallback(async () => {
     try {
       const res = await getActivityLogs(token);
-      setList(res['hydra:member'] ?? res.data ?? res ?? []);
+      setList(collectionOf(res));
     } catch (e) { console.error('[ActivityLogs]', e); }
     finally { setLoading(false); setRefreshing(false); }
   }, [token]);

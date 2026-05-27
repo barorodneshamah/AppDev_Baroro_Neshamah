@@ -6,25 +6,66 @@ import {
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { useSelector } from 'react-redux';
+import { useDispatch, useSelector } from 'react-redux';
 import { RootState } from '../../store';
 import { getContactMessage, replyToMessage, updateMessageStatus, deleteMessage } from '../../app/api/api';
+import { markRead } from '../../app/reducers/notifications';
 import { COLORS, FONTS, SHADOW, RADIUS } from '../../theme';
+import { ConfirmModal, ConfirmModalConfig } from '../../components/AppModals';
 
 interface Props { accentColor: string; }
 
 const STATUS_OPTIONS = ['unread', 'read', 'replied', 'archived'];
 
+const replyKey = (reply: any, index: number) =>
+  String(reply?.id ?? reply?.['@id'] ?? `${reply?.createdAt ?? 'reply'}-${index}`);
+
+const replyBody = (reply: any) =>
+  reply?.replyMessage ?? reply?.message ?? reply?.body ?? '';
+
+const isReplyFromCurrentUser = (reply: any, userId?: number | null) => {
+  if (!userId) return false;
+  return reply?.repliedBy?.id === userId || reply?.repliedBy === `/api/users/${userId}`;
+};
+
+const notificationMessageId = (notification: any): number | null => {
+  const value = notification?.data?.messageId
+    ?? notification?.data?.contactMessageId
+    ?? notification?.data?.itemId
+    ?? notification?.data?.id
+    ?? notification?.messageId
+    ?? notification?.contactMessageId
+    ?? notification?.itemId;
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') {
+    const id = value.match(/\/(\d+)$/)?.[1] ?? value;
+    const parsed = Number(id);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  if (value?.id != null) return Number(value.id);
+  if (typeof value?.['@id'] === 'string') {
+    const id = value['@id'].match(/\/(\d+)$/)?.[1];
+    return id ? Number(id) : null;
+  }
+  return null;
+};
+
 const MessageDetailScreen: FC<Props> = ({ accentColor }) => {
   const navigation  = useNavigation<any>();
   const route       = useRoute<any>();
   const { id, message: passed } = route.params as { id: number; message?: any };
-  const { token }   = useSelector((state: RootState) => state.auth);
+  const dispatch = useDispatch();
+  const { token, data, notifications } = useSelector((state: RootState) => ({
+    token: state.auth.token,
+    data: state.auth.data,
+    notifications: state.notifications.items,
+  }));
 
   const [item, setItem]         = useState<any>(passed ?? null);
   const [loading, setLoading]   = useState(!passed);
   const [reply, setReply]       = useState('');
   const [sending, setSending]   = useState(false);
+  const [confirmConfig, setConfirmConfig] = useState<ConfirmModalConfig | null>(null);
 
   const reload = async () => {
     const fresh = await getContactMessage(id, token);
@@ -39,6 +80,18 @@ const MessageDetailScreen: FC<Props> = ({ accentColor }) => {
       .finally(() => setLoading(false));
   }, [id, token, passed]);
 
+  useEffect(() => {
+    notifications
+      .filter(n => !n.read && n.type === 'message' && notificationMessageId(n) === Number(id))
+      .forEach(n => dispatch(markRead(n.id)));
+  }, [dispatch, id, notifications]);
+
+  useEffect(() => {
+    if (!['new', 'unread'].includes(String(item?.status ?? '').toLowerCase())) return;
+    setItem((current: any) => current ? { ...current, status: 'read' } : current);
+    updateMessageStatus(id, 'read', token).catch(e => console.error('[MessageDetail] mark read', e));
+  }, [id, item?.status, token]);
+
   const handleReply = async () => {
     if (!reply.trim()) return;
     setSending(true);
@@ -51,30 +104,47 @@ const MessageDetailScreen: FC<Props> = ({ accentColor }) => {
   };
 
   const handleStatus = (status: string) => {
-    Alert.alert('Update Status', `Mark as "${status}"?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Update', onPress: async () => {
-          try { await updateMessageStatus(id, status, token); await reload(); }
-          catch (e: any) { Alert.alert('Error', e.message); }
-        },
+    setConfirmConfig({
+      icon:         'check-circle-outline',
+      iconBg:       accentColor + '18',
+      iconColor:    accentColor,
+      title:        'Update Status?',
+      message:      `Mark this message as "${status}"?`,
+      confirmLabel: 'Update',
+      cancelLabel:  'Cancel',
+      onCancel:     () => setConfirmConfig(null),
+      onConfirm:    async () => {
+        setConfirmConfig(null);
+        try { await updateMessageStatus(id, status, token); await reload(); }
+        catch (e: any) { Alert.alert('Error', e.message); }
       },
-    ]);
+    });
   };
 
   const handleDelete = () => {
-    Alert.alert('Delete Message', 'This action cannot be undone.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete', style: 'destructive', onPress: async () => {
-          try { await deleteMessage(id, token); navigation.goBack(); }
-          catch (e: any) { Alert.alert('Error', e.message); }
-        },
+    setConfirmConfig({
+      icon:         'trash-can-outline',
+      iconBg:       COLORS.errorFaded,
+      iconColor:    COLORS.error,
+      title:        'Delete Message?',
+      message:      'This action cannot be undone.',
+      confirmLabel: 'Delete',
+      cancelLabel:  'Cancel',
+      dangerous:    true,
+      onCancel:     () => setConfirmConfig(null),
+      onConfirm:    async () => {
+        setConfirmConfig(null);
+        try { await deleteMessage(id, token); navigation.goBack(); }
+        catch (e: any) { Alert.alert('Error', e.message); }
       },
-    ]);
+    });
   };
 
   if (loading) return <ActivityIndicator color={accentColor} style={{ marginTop: 80 }} />;
+
+  const sortedReplies = [...(item?.replies ?? [])].sort(
+    (a: any, b: any) => new Date(a?.createdAt ?? 0).getTime() - new Date(b?.createdAt ?? 0).getTime()
+  );
 
   return (
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -104,11 +174,6 @@ const MessageDetailScreen: FC<Props> = ({ accentColor }) => {
           <Text style={styles.senderDate}>{item?.createdAt?.slice(0, 10)}</Text>
         </View>
 
-        {/* Message body */}
-        <View style={styles.messageCard}>
-          <Text style={styles.messageText}>{item?.message}</Text>
-        </View>
-
         {/* Status chips */}
         <View style={styles.statusRow}>
           <Text style={styles.statusLabel}>Status:</Text>
@@ -123,19 +188,45 @@ const MessageDetailScreen: FC<Props> = ({ accentColor }) => {
           ))}
         </View>
 
-        {/* Replies */}
-        {(item?.replies ?? []).length > 0 && (
-          <View style={styles.repliesSection}>
-            <Text style={styles.repliesTitle}>Previous Replies</Text>
-            {(item.replies as any[]).map((r: any) => (
-              <View key={r.id} style={[styles.replyCard, { borderLeftColor: accentColor }]}>
-                <Text style={styles.replyBy}>{r.repliedBy?.fullName ?? 'Staff'}</Text>
-                <Text style={styles.replyText}>{r.replyMessage}</Text>
-                <Text style={styles.replyDate}>{r.createdAt?.slice(0, 10)}</Text>
+        {/* Conversation */}
+        <View style={styles.threadSection}>
+          <Text style={styles.threadTitle}>Conversation</Text>
+
+          <View style={styles.bubbleRowLeft}>
+            <View style={styles.bubbleLeft}>
+              <View style={styles.bubbleMeta}>
+                <Icon name="account-circle-outline" size={14} color={COLORS.textMuted} />
+                <Text style={styles.bubbleName}>{item?.fullName ?? 'Customer'}</Text>
+                <Text style={styles.bubbleTime}>{item?.createdAt?.slice(0, 10) ?? ''}</Text>
               </View>
-            ))}
+              <Text style={styles.bubbleText}>{item?.message ?? ''}</Text>
+            </View>
           </View>
-        )}
+
+          {sortedReplies.map((r: any, index: number) => {
+            const mine = isReplyFromCurrentUser(r, data?.id);
+            return (
+              <View key={replyKey(r, index)} style={mine ? styles.bubbleRowRight : styles.bubbleRowLeft}>
+                <View style={mine ? [styles.bubbleRight, { backgroundColor: accentColor }] : styles.bubbleLeft}>
+                  <View style={styles.bubbleMeta}>
+                    <Icon
+                      name={mine ? 'account-tie-outline' : 'account-circle-outline'}
+                      size={14}
+                      color={mine ? 'rgba(255,255,255,0.8)' : COLORS.textMuted}
+                    />
+                    <Text style={mine ? styles.bubbleNameWhite : styles.bubbleName}>
+                      {mine ? 'You' : r?.repliedBy?.fullName ?? item?.fullName ?? 'Customer'}
+                    </Text>
+                    <Text style={mine ? styles.bubbleTimeWhite : styles.bubbleTime}>
+                      {r?.createdAt?.slice(0, 10) ?? ''}
+                    </Text>
+                  </View>
+                  <Text style={mine ? styles.bubbleTextWhite : styles.bubbleText}>{replyBody(r)}</Text>
+                </View>
+              </View>
+            );
+          })}
+        </View>
 
         {/* Reply input */}
         <View style={styles.replyBox}>
@@ -164,6 +255,7 @@ const MessageDetailScreen: FC<Props> = ({ accentColor }) => {
           </TouchableOpacity>
         </View>
       </ScrollView>
+      <ConfirmModal config={confirmConfig} />
     </KeyboardAvoidingView>
   );
 };
@@ -193,20 +285,37 @@ const styles = StyleSheet.create({
   senderPhone: { fontSize: 12, color: COLORS.textMuted, fontFamily: FONTS.body },
   senderDate:  { fontSize: 11, color: COLORS.textMuted, fontFamily: FONTS.body },
 
-  messageCard: { backgroundColor: COLORS.surface, borderRadius: RADIUS.md, padding: 16, ...SHADOW.sm, marginBottom: 12 },
-  messageText: { fontSize: 14, color: COLORS.textDark, fontFamily: FONTS.body, lineHeight: 22 },
-
   statusRow:   { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
   statusLabel: { fontSize: 12, fontFamily: FONTS.bold, fontWeight: '700', color: COLORS.textDark },
   statusChip:  { paddingHorizontal: 12, paddingVertical: 5, borderRadius: RADIUS.full, backgroundColor: COLORS.surfaceAlt },
   statusChipText: { fontSize: 11, fontWeight: '700', fontFamily: FONTS.bold, color: COLORS.textMuted },
 
-  repliesSection: { marginBottom: 16 },
-  repliesTitle:   { fontSize: 13, fontWeight: '700', color: COLORS.textDark, fontFamily: FONTS.bold, marginBottom: 8 },
-  replyCard:      { borderLeftWidth: 3, paddingLeft: 12, marginBottom: 10, paddingVertical: 6 },
-  replyBy:        { fontSize: 12, fontWeight: '700', color: COLORS.textDark, fontFamily: FONTS.bold },
-  replyText:      { fontSize: 13, color: COLORS.textDark, fontFamily: FONTS.body, marginTop: 4, lineHeight: 20 },
-  replyDate:      { fontSize: 10, color: COLORS.textMuted, fontFamily: FONTS.body, marginTop: 4 },
+  threadSection: { marginBottom: 16 },
+  threadTitle:   { fontSize: 13, fontWeight: '700', color: COLORS.textDark, fontFamily: FONTS.bold, marginBottom: 10 },
+  bubbleRowLeft: { alignItems: 'flex-start', marginBottom: 10 },
+  bubbleRowRight:{ alignItems: 'flex-end', marginBottom: 10 },
+  bubbleLeft: {
+    maxWidth: '84%',
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.md,
+    borderBottomLeftRadius: 4,
+    padding: 12,
+    ...SHADOW.sm,
+  },
+  bubbleRight: {
+    maxWidth: '84%',
+    borderRadius: RADIUS.md,
+    borderBottomRightRadius: 4,
+    padding: 12,
+    ...SHADOW.sm,
+  },
+  bubbleMeta: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 6 },
+  bubbleName: { flex: 1, fontSize: 11, color: COLORS.textMuted, fontFamily: FONTS.bold, fontWeight: '700' },
+  bubbleNameWhite: { flex: 1, fontSize: 11, color: 'rgba(255,255,255,0.86)', fontFamily: FONTS.bold, fontWeight: '700' },
+  bubbleTime: { fontSize: 10, color: COLORS.textMuted, fontFamily: FONTS.body },
+  bubbleTimeWhite: { fontSize: 10, color: 'rgba(255,255,255,0.72)', fontFamily: FONTS.body },
+  bubbleText: { fontSize: 14, color: COLORS.textDark, fontFamily: FONTS.body, lineHeight: 21 },
+  bubbleTextWhite: { fontSize: 14, color: '#fff', fontFamily: FONTS.body, lineHeight: 21 },
 
   replyBox:      { backgroundColor: COLORS.surface, borderRadius: RADIUS.md, padding: 14, ...SHADOW.sm },
   replyBoxLabel: { fontSize: 12, fontWeight: '700', color: COLORS.textDark, fontFamily: FONTS.bold, marginBottom: 8 },

@@ -7,20 +7,29 @@ import {
   RefreshControl,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import { useSelector } from 'react-redux';
+import { useSelector, useDispatch } from 'react-redux';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { RootState } from '../store';
-import { getContactMessages, submitContactMessage, getContactReplies, submitContactReply } from '../app/api/api';
+import { getContactMessages, submitContactMessage, getContactReplies, submitContactReply, isAuthError } from '../app/api/api';
+import { userLogout } from '../app/reducers/auth';
+import { markRead } from '../app/reducers/notifications';
 import { COLORS, FONTS, RADIUS, SHADOW, SPACING } from '../theme';
 
 const STATUS_META: Record<string, { label: string; color: string; icon: string }> = {
   NEW:      { label: 'Sent',     color: '#1565c0', icon: 'email-send-outline' },
+  UNREAD:   { label: 'Sent',     color: '#1565c0', icon: 'email-send-outline' },
   READ:     { label: 'Read',     color: '#2e7d32', icon: 'email-open-outline' },
   REPLIED:  { label: 'Replied',  color: '#c24a16', icon: 'reply-outline' },
   CLOSED:   { label: 'Closed',   color: '#888888', icon: 'email-check-outline' },
+  ARCHIVED: { label: 'Closed',   color: '#888888', icon: 'email-check-outline' },
 };
 
 const timeAgo = (iso: string): string => {
-  const diff = Date.now() - new Date(iso).getTime();
+  const date = new Date(iso);
+  const timestamp = date.getTime();
+  if (!Number.isFinite(timestamp)) return '';
+
+  const diff = Math.max(0, Date.now() - timestamp);
   const mins = Math.floor(diff / 60_000);
   if (mins < 1)  return 'Just now';
   if (mins < 60) return `${mins}m ago`;
@@ -28,8 +37,90 @@ const timeAgo = (iso: string): string => {
   if (hrs < 24)  return `${hrs}h ago`;
   const days = Math.floor(hrs / 24);
   if (days < 7)  return `${days}d ago`;
-  return new Date(iso).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' });
+  return date.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' });
 };
+
+const replyBody = (reply: any) =>
+  reply?.replyMessage ?? reply?.message ?? reply?.body ?? '';
+
+const replyKey = (reply: any, index: number) =>
+  String(reply?.id ?? reply?.['@id'] ?? `${reply?.createdAt ?? 'reply'}-${index}`);
+
+const replyMarker = (reply: any) =>
+  String(reply?.id ?? reply?.['@id'] ?? reply?.createdAt ?? replyBody(reply));
+
+const replyContactMessageId = (reply: any): number | null => {
+  const contactMessage = reply?.contactMessage;
+  if (typeof contactMessage === 'number') return contactMessage;
+  if (typeof contactMessage === 'string') {
+    const id = contactMessage.match(/\/(\d+)$/)?.[1];
+    return id ? Number(id) : null;
+  }
+  if (contactMessage?.id) return Number(contactMessage.id);
+  if (typeof contactMessage?.['@id'] === 'string') {
+    const id = contactMessage['@id'].match(/\/(\d+)$/)?.[1];
+    return id ? Number(id) : null;
+  }
+  return null;
+};
+
+const isReplyFromUser = (reply: any, userId: number | null) => {
+  if (!userId) return false;
+  return reply?.repliedBy?.id === userId || reply?.repliedBy === `/api/users/${userId}`;
+};
+
+const timestampOf = (iso?: string): number => {
+  const value = iso ? new Date(iso).getTime() : 0;
+  return Number.isFinite(value) ? value : 0;
+};
+
+const getThreadReplies = (message: any, allReplies: any[]): any[] => {
+  const embedded = Array.isArray(message?.replies) ? message.replies : [];
+  if (embedded.length > 0) return embedded;
+  const messageId = Number(message?.id);
+  return allReplies.filter(r => replyContactMessageId(r) === messageId);
+};
+
+const latestActivityAt = (message: any, allReplies: any[]): string | undefined => {
+  const threadReplies = getThreadReplies(message, allReplies);
+  const latestReplyTime = threadReplies.reduce(
+    (latest: number, reply: any) => Math.max(latest, timestampOf(reply?.createdAt)),
+    0,
+  );
+  const latest = Math.max(timestampOf(message?.createdAt), latestReplyTime);
+  return latest ? new Date(latest).toISOString() : message?.createdAt;
+};
+
+const latestConversationPreview = (message: any, allReplies: any[]): string => {
+  const threadReplies = getThreadReplies(message, allReplies);
+  const latestReply = [...threadReplies].sort((a, b) => timestampOf(b?.createdAt) - timestampOf(a?.createdAt))[0];
+  return replyBody(latestReply) || String(message?.message ?? '').trim();
+};
+
+const notificationMessageId = (notification: any): number | null => {
+  const value = notification?.data?.messageId
+    ?? notification?.data?.contactMessageId
+    ?? notification?.data?.itemId
+    ?? notification?.data?.id
+    ?? notification?.messageId
+    ?? notification?.contactMessageId
+    ?? notification?.itemId;
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') {
+    const id = value.match(/\/(\d+)$/)?.[1] ?? value;
+    const parsed = Number(id);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  if (value?.id != null) return Number(value.id);
+  if (typeof value?.['@id'] === 'string') {
+    const id = value['@id'].match(/\/(\d+)$/)?.[1];
+    return id ? Number(id) : null;
+  }
+  return null;
+};
+
+const collectionOf = (response: any): any[] =>
+  response?.['hydra:member'] ?? response?.member ?? response?.data ?? (Array.isArray(response) ? response : []);
 
 // ─── Thread View Modal ────────────────────────────────────────────────────────
 
@@ -40,26 +131,47 @@ const ThreadModal: FC<{
   onClose: () => void;
   token: string | null;
   userId: number | null;
+  hasUnreadSupportReply: boolean;
   onReplySent: () => void;
-}> = ({ message, replies, visible, onClose, token, userId, onReplySent }) => {
+}> = ({ message, replies, visible, onClose, token, userId, hasUnreadSupportReply, onReplySent }) => {
   const [replyText, setReplyText] = useState('');
   const [sending,   setSending]   = useState(false);
+  const [localReplies, setLocalReplies] = useState<any[]>([]);
   const scrollRef = React.useRef<ScrollView>(null);
 
-  const threadReplies = replies.filter(r =>
-    r.contactMessage === `/api/contact_messages/${message?.id}` ||
-    r.contactMessage?.id === message?.id,
+  useEffect(() => {
+    setLocalReplies([]);
+    setReplyText('');
+  }, [message?.id, visible]);
+
+  const baseReplies = getThreadReplies(message, replies);
+  const visibleLocalReplies = localReplies.filter(local =>
+    !baseReplies.some(reply => replyBody(reply) === replyBody(local) && isReplyFromUser(reply, userId))
   );
+  const threadReplies = [...baseReplies, ...visibleLocalReplies].sort(
+    (a, b) => new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime()
+  );
+  const latestSupportReply = [...threadReplies].reverse().find(r => !isReplyFromUser(r, userId));
+  const latestSupportMarker = latestSupportReply ? replyMarker(latestSupportReply) : null;
 
   const handleSendReply = async () => {
     if (!replyText.trim()) return;
     setSending(true);
     try {
-      await submitContactReply({
+      const sentText = replyText.trim();
+      const created = await submitContactReply({
         contactMessage: `/api/contact_messages/${message.id}`,
         repliedBy:      `/api/users/${userId}`,
-        replyMessage:   replyText.trim(),
+        replyMessage:   sentText,
       }, token);
+      setLocalReplies(prev => [...prev, {
+        ...(created ?? {}),
+        id: created?.id ?? created?.['@id'] ?? `local-${Date.now()}`,
+        contactMessage: `/api/contact_messages/${message.id}`,
+        repliedBy: `/api/users/${userId}`,
+        replyMessage: sentText,
+        createdAt: created?.createdAt ?? new Date().toISOString(),
+      }]);
       setReplyText('');
       onReplySent();
       setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 300);
@@ -112,28 +224,33 @@ const ThreadModal: FC<{
 
           {/* Replies alternating: support = left, customer replies = right */}
           {threadReplies.map((r, i) => {
-            const isCustomer = r.repliedBy?.id === userId ||
-              r.repliedBy === `/api/users/${userId}`;
+            const isCustomer = isReplyFromUser(r, userId);
+            const isNewSupportReply = hasUnreadSupportReply && !isCustomer && replyMarker(r) === latestSupportMarker;
             return isCustomer ? (
-              <View key={i} style={thread.rowRight}>
+              <View key={replyKey(r, i)} style={thread.rowRight}>
                 <View style={[thread.bubble, thread.bubbleCustomer]}>
                   <View style={thread.bubbleMeta}>
                     <Icon name="account-circle-outline" size={14} color="rgba(255,255,255,0.8)" />
                     <Text style={thread.bubbleFromWhite}>You</Text>
                     <Text style={thread.bubbleTimeWhite}>{r.createdAt ? timeAgo(r.createdAt) : ''}</Text>
                   </View>
-                  <Text style={thread.bubbleTextWhite}>{r.replyMessage ?? ''}</Text>
+                  <Text style={thread.bubbleTextWhite}>{replyBody(r)}</Text>
                 </View>
               </View>
             ) : (
-              <View key={i} style={thread.rowLeft}>
-                <View style={[thread.bubble, thread.bubbleSupport]}>
+              <View key={replyKey(r, i)} style={thread.rowLeft}>
+                <View style={[thread.bubble, thread.bubbleSupport, isNewSupportReply && thread.bubbleSupportNew]}>
                   <View style={thread.bubbleMeta}>
                     <Icon name="headset" size={14} color={COLORS.primary} />
                     <Text style={thread.bubbleFrom}>Support Team</Text>
                     <Text style={thread.bubbleTime}>{r.createdAt ? timeAgo(r.createdAt) : ''}</Text>
                   </View>
-                  <Text style={thread.bubbleText}>{r.replyMessage ?? ''}</Text>
+                  <Text style={thread.bubbleText}>{replyBody(r)}</Text>
+                  {isNewSupportReply && (
+                    <View style={thread.newBadge}>
+                      <Text style={thread.newBadgeText}>New</Text>
+                    </View>
+                  )}
                 </View>
               </View>
             );
@@ -207,6 +324,11 @@ const thread = StyleSheet.create({
     backgroundColor: '#fff',
     borderBottomLeftRadius: 4,
   },
+  bubbleSupportNew: {
+    borderWidth: 1.5,
+    borderColor: COLORS.primary,
+    backgroundColor: '#fff8f2',
+  },
 
   bubbleMeta: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 6 },
   bubbleFrom: { flex: 1, fontSize: 11, fontFamily: FONTS.bold, fontWeight: '700', color: COLORS.textMuted },
@@ -219,6 +341,15 @@ const thread = StyleSheet.create({
 
   waitingWrap: { alignItems: 'center', marginTop: 32, gap: 8 },
   waitingText: { fontSize: 13, fontFamily: FONTS.body, color: COLORS.textMuted, textAlign: 'center' },
+  newBadge: {
+    alignSelf: 'flex-start',
+    marginTop: 8,
+    borderRadius: RADIUS.full,
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  newBadgeText: { color: '#fff', fontSize: 10, fontFamily: FONTS.bold, fontWeight: '800' },
 
   inputBar: {
     flexDirection: 'row', alignItems: 'flex-end', gap: 10,
@@ -292,6 +423,11 @@ const ComposeModal: FC<{
       onSent();
       onClose();
     } catch (e: any) {
+      if (isAuthError(e)) {
+        Alert.alert('Session expired', 'Please log in again to continue.');
+        onClose();
+        return;
+      }
       Alert.alert('Error', e.message);
     } finally {
       setSending(false);
@@ -418,7 +554,11 @@ const compose = StyleSheet.create({
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 
 const MessagesScreen: FC = () => {
+  const dispatch = useDispatch();
   const { data, token } = useSelector((state: RootState) => state.auth);
+  const notifications = useSelector((state: RootState) => state.notifications.items);
+  const navigation = useNavigation<any>();
+  const route = useRoute<any>();
 
   const [messages,   setMessages]   = useState<any[]>([]);
   const [replies,    setReplies]    = useState<any[]>([]);
@@ -426,18 +566,45 @@ const MessagesScreen: FC = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [composing,  setComposing]  = useState(false);
   const [active,     setActive]     = useState<any>(null);
+  const [activeUnreadMessageId, setActiveUnreadMessageId] = useState<number | null>(null);
+  const [openedIds,  setOpenedIds]  = useState<Set<number>>(new Set());
 
   const senderName  = data?.fullName  || data?.username || '';
   const senderEmail = data?.email     || '';
+  const unreadMessageNotifications = notifications.filter(n => !n.read && n.type === 'message');
+  const unreadMessageIds = unreadMessageNotifications
+    .map(notificationMessageId)
+    .filter((id): id is number => id !== null);
+
+  const openMessageId: number | undefined = route.params?.openMessageId;
+
+  useEffect(() => {
+    if (!openMessageId || loading || messages.length === 0) return;
+    const msg = messages.find(m => m.id === openMessageId || m.id === Number(openMessageId));
+    if (msg) {
+      setActiveUnreadMessageId(Number(openMessageId));
+      notifications
+        .filter(n => !n.read && n.type === 'message' && notificationMessageId(n) === Number(openMessageId))
+        .forEach(n => dispatch(markRead(n.id)));
+      setActive(msg);
+      navigation.setParams({ openMessageId: undefined });
+    }
+  }, [openMessageId, messages, loading, notifications, dispatch, navigation]);
+
+  const handleAuthExpiration = (error: any) => {
+    if (!isAuthError(error)) return false;
+    dispatch(userLogout());
+    Alert.alert('Session expired', 'Please log in again to continue.');
+    return true;
+  };
 
   const load = useCallback(async () => {
     try {
       const [msgRes, repRes] = await Promise.all([
-        getContactMessages(token).catch(() => ({})),
-        getContactReplies(token).catch(() => ({})),
+        getContactMessages(token),
+        getContactReplies(token),
       ]);
-      const pick = (r: any) => r?.['hydra:member'] ?? r?.data ?? (Array.isArray(r) ? r : []);
-      const allMsgs: any[] = pick(msgRes);
+      const allMsgs: any[] = collectionOf(msgRes);
 
       // Only show messages sent by this user — filter by email so other
       // users' messages (visible to admin) are never shown to the customer.
@@ -445,44 +612,95 @@ const MessagesScreen: FC = () => {
         ? allMsgs.filter(m => m.email === senderEmail)
         : allMsgs;
 
-      setMessages(myMsgs);
-      setReplies(pick(repRes));
+      const allReplies = collectionOf(repRes);
+      setMessages([...myMsgs].sort((a, b) =>
+        timestampOf(latestActivityAt(b, allReplies)) - timestampOf(latestActivityAt(a, allReplies))
+      ));
+      setReplies(allReplies);
+    } catch (e: any) {
+      if (handleAuthExpiration(e)) return;
+      Alert.alert('Error', e.message ?? 'Unable to load messages.');
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [token, senderEmail]);
+  }, [token, senderEmail, dispatch]);
 
   useEffect(() => { load(); }, [load]);
   const onRefresh = () => { setRefreshing(true); load(); };
 
+  useEffect(() => {
+    if (unreadMessageNotifications.length === 0) return;
+    load();
+  }, [unreadMessageNotifications.length, load]);
+
+  const isLikelyUnreadThread = (item: any): boolean => {
+    const itemId = Number(item.id);
+    if (openedIds.has(itemId)) return false;
+    return unreadMessageIds.includes(itemId);
+  };
+
   const renderItem = ({ item }: { item: any }) => {
     const status = item.status?.toUpperCase() ?? 'NEW';
     const meta   = STATUS_META[status] ?? STATUS_META.NEW;
-    const replyCount = replies.filter(r =>
-      r.contactMessage === `/api/contact_messages/${item.id}` ||
-      r.contactMessage?.id === item.id
-    ).length;
+    const threadReplies = getThreadReplies(item, replies);
+    const replyCount = threadReplies.length;
+    const hasReplies = replyCount > 0;
+    const isWaitingReply = !hasReplies && ['NEW', 'UNREAD', 'READ'].includes(status);
+    const activeAt = latestActivityAt(item, replies);
+    const hasUnreadSupportReply = isLikelyUnreadThread(item);
+    const preview = latestConversationPreview(item, replies);
+    const openThread = () => {
+      setOpenedIds(prev => new Set([...prev, Number(item.id)]));
+      setActiveUnreadMessageId(hasUnreadSupportReply ? Number(item.id) : null);
+      notifications
+        .filter(n => !n.read && n.type === 'message' && notificationMessageId(n) === Number(item.id))
+        .forEach(n => dispatch(markRead(n.id)));
+      setActive(item);
+      load();
+    };
 
     return (
-      <TouchableOpacity style={S.card} onPress={() => { setActive(item); load(); }} activeOpacity={0.85}>
+      <TouchableOpacity
+        style={[S.card, isWaitingReply && S.cardWaitingReply, hasReplies && S.cardWithReply, hasUnreadSupportReply && S.cardUnreadReply]}
+        onPress={openThread}
+        activeOpacity={0.85}
+      >
         <View style={[S.cardIcon, { backgroundColor: meta.color + '18' }]}>
           <Icon name={meta.icon} size={22} color={meta.color} />
         </View>
         <View style={S.cardContent}>
           <View style={S.cardTop}>
-            <Text style={S.cardSubject} numberOfLines={1}>{item.subject}</Text>
-            <Text style={S.cardTime}>{item.createdAt ? timeAgo(item.createdAt) : ''}</Text>
+            <Text style={[S.cardSubject, isWaitingReply && S.cardSubjectWaiting, hasUnreadSupportReply && S.cardUnreadReplyText]} numberOfLines={1}>{item.subject}</Text>
+            <Text style={[S.cardTime, hasUnreadSupportReply && S.cardTimeUnread]}>{activeAt ? timeAgo(activeAt) : ''}</Text>
           </View>
-          <Text style={S.cardPreview} numberOfLines={1}>{item.message}</Text>
+          {hasReplies && (
+            <Text style={[S.cardFrom, hasUnreadSupportReply && S.cardFromUnread]} numberOfLines={1}>
+              Support Team
+            </Text>
+          )}
+          <Text style={[S.cardPreview, isWaitingReply && S.cardPreviewWaiting, hasUnreadSupportReply && S.cardUnreadReplyText]} numberOfLines={1}>{preview}</Text>
           <View style={S.cardBottom}>
             <View style={[S.statusPill, { backgroundColor: meta.color + '18' }]}>
               <Text style={[S.statusText, { color: meta.color }]}>{meta.label}</Text>
             </View>
             {replyCount > 0 && (
-              <View style={S.replyBadge}>
+              <View style={[S.replyBadge, hasUnreadSupportReply && S.replyBadgeUnread]}>
                 <Icon name="reply" size={11} color={COLORS.primary} />
-                <Text style={S.replyBadgeText}>{replyCount} {replyCount === 1 ? 'reply' : 'replies'}</Text>
+                <Text style={[S.replyBadgeText, hasUnreadSupportReply && S.replyBadgeTextUnread]}>
+                  {hasUnreadSupportReply ? 'new reply' : `${replyCount} ${replyCount === 1 ? 'reply' : 'replies'}`}
+                </Text>
+              </View>
+            )}
+            {replyCount === 0 && hasUnreadSupportReply && (
+              <View style={S.replyBadgeUnread}>
+                <Text style={S.replyBadgeTextUnread}>new reply</Text>
+              </View>
+            )}
+            {isWaitingReply && (
+              <View style={S.waitingBadge}>
+                <Icon name="clock-outline" size={11} color={COLORS.warning} />
+                <Text style={S.waitingBadgeText}>awaiting reply</Text>
               </View>
             )}
           </View>
@@ -544,9 +762,13 @@ const MessagesScreen: FC = () => {
           message={active}
           replies={replies}
           visible={!!active}
-          onClose={() => setActive(null)}
+          onClose={() => {
+            setActive(null);
+            setActiveUnreadMessageId(null);
+          }}
           token={token}
           userId={data?.id ?? null}
+          hasUnreadSupportReply={activeUnreadMessageId === Number(active.id)}
           onReplySent={load}
         />
       )}
@@ -578,17 +800,51 @@ const S = StyleSheet.create({
     borderRadius: RADIUS.lg, padding: 14,
     marginBottom: 10, ...SHADOW.sm, gap: 12,
   },
+  cardWithReply: {
+    borderLeftWidth: 4,
+    borderLeftColor: COLORS.primary,
+    backgroundColor: '#fffaf6',
+  },
+  cardWaitingReply: {
+    borderLeftWidth: 4,
+    borderLeftColor: COLORS.warning,
+    backgroundColor: '#fff8f2',
+  },
+  cardUnreadReply: {
+    borderLeftWidth: 6,
+    borderLeftColor: COLORS.warning,
+    borderWidth: 1,
+    borderColor: '#f4b56b',
+    backgroundColor: '#f8f1e7',
+    ...SHADOW.md,
+  },
   cardIcon:    { width: 48, height: 48, borderRadius: RADIUS.md, justifyContent: 'center', alignItems: 'center', flexShrink: 0 },
   cardContent: { flex: 1, gap: 4 },
   cardTop:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   cardSubject: { flex: 1, fontSize: 14, fontFamily: FONTS.bold, fontWeight: '700', color: COLORS.textDark, marginRight: 8 },
   cardTime:    { fontSize: 11, fontFamily: FONTS.body, color: COLORS.textMuted },
+  cardFrom:    { fontSize: 12, fontFamily: FONTS.body, color: COLORS.textMuted },
+  cardFromUnread: { fontSize: 13, fontFamily: FONTS.bold, fontWeight: '900', color: COLORS.warning },
   cardPreview: { fontSize: 12, fontFamily: FONTS.body, color: COLORS.textMuted },
+  cardSubjectWaiting: { color: '#1f2937', fontWeight: '900' },
+  cardPreviewWaiting: { color: '#374151', fontFamily: FONTS.medium, fontWeight: '700' },
+  cardSubjectWithReply: { color: '#111827', fontWeight: '900' },
+  cardTimeUnread: { color: '#374151', fontFamily: FONTS.bold, fontWeight: '700' },
+  cardUnreadReplyText: { color: '#0f172a', fontFamily: FONTS.bold, fontWeight: '900' },
   cardBottom:  { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 },
   statusPill:  { borderRadius: RADIUS.full, paddingHorizontal: 8, paddingVertical: 3 },
   statusText:  { fontSize: 10, fontFamily: FONTS.bold, fontWeight: '700' },
   replyBadge:  { flexDirection: 'row', alignItems: 'center', gap: 4 },
   replyBadgeText: { fontSize: 11, fontFamily: FONTS.body, color: COLORS.primary },
+  replyBadgeUnread: {
+    backgroundColor: COLORS.primary + '18',
+    borderRadius: RADIUS.full,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  replyBadgeTextUnread: { fontFamily: FONTS.bold, fontWeight: '900', color: COLORS.primary },
+  waitingBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: COLORS.warning + '18', borderRadius: RADIUS.full, paddingHorizontal: 8, paddingVertical: 3 },
+  waitingBadgeText: { fontSize: 11, fontFamily: FONTS.bold, fontWeight: '900', color: COLORS.warning },
 
   empty:      { flex: 1, justifyContent: 'center', alignItems: 'center', marginTop: 80, gap: 10 },
   emptyTitle: { fontSize: 18, fontFamily: FONTS.display, fontWeight: '700', color: COLORS.textDark },

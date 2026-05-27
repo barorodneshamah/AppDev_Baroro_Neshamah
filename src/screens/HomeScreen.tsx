@@ -1,43 +1,55 @@
 // src/screens/HomeScreen.tsx
-import React, { FC, useEffect, useState, useCallback } from 'react';
+import React, { FC, useEffect, useState, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   Platform, StatusBar, Image, ActivityIndicator,
-  ImageBackground, RefreshControl, Dimensions,
+  ImageBackground, RefreshControl, Dimensions, Animated,
 } from 'react-native';
 import { useNavigation, NavigationProp } from '@react-navigation/native';
 import { useSelector } from 'react-redux';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import {
-  getTours, getRooms, getPackages, getReservations,
+  getTours, getRooms, getPackages, getReservations, getWallPosts,
 } from '../app/api/api';
 import { RootState } from '../store';
 import { COLORS, FONTS, RADIUS, SHADOW, SPACING, getStatusColor } from '../theme';
 import ROUTES from '../utils';
+import API_BASE_URL from '../config/api.config';
+import { WallApiPost } from '../app/api/api';
 
 const { width } = Dimensions.get('window');
-const API_BASE  = 'http://192.168.254.138:8000';
+const API_BASE  = API_BASE_URL;
 
-const resolveImg = (path?: string | null, seed = 'item'): string => {
+const UPLOAD_DIR: Record<string, string> = {
+  room: 'uploads/rooms', tour: 'uploads/tours', food: 'uploads/foods',
+  package: 'uploads/packages', spa: 'uploads/spas',
+};
+
+const resolveImg = (path?: string | null, seed = 'item', type?: string): string => {
   if (!path) return `https://picsum.photos/seed/${seed}/600/400`;
-  if (path.startsWith('http')) return path;
-  return `${API_BASE}${path}`;
+  if (path.startsWith('http')) {
+    return path.replace(/https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/, API_BASE);
+  }
+  if (path.startsWith('/')) return `${API_BASE}${path}`;
+  if (path.startsWith('uploads/')) return `${API_BASE}/${path}`;
+  if (type && UPLOAD_DIR[type]) return `${API_BASE}/${UPLOAD_DIR[type]}/${path}`;
+  return `${API_BASE}/uploads/${path}`;
 };
 
 // ─── Service category tiles ───────────────────────────────────────────────────
 
 const CATEGORIES = [
-  { icon: 'bed',                   label: 'Rooms',    color: '#1565c0' },
-  { icon: 'map-marker-path',       label: 'Tours',    color: '#2e7d32' },
-  { icon: 'spa',                   label: 'Spa',      color: '#ad1457' },
-  { icon: 'silverware-fork-knife', label: 'Dining',   color: '#e65100' },
-  { icon: 'gift',                  label: 'Packages', color: '#6a1b9a' },
+  { icon: 'bed',                   label: 'Rooms',    color: '#1565c0', tab: 'Rooms'    },
+  { icon: 'map-marker-path',       label: 'Tours',    color: '#2e7d32', tab: 'Tours'    },
+  { icon: 'spa',                   label: 'Spa',      color: '#ad1457', tab: 'Spa'      },
+  { icon: 'silverware-fork-knife', label: 'Dining',   color: '#e65100', tab: 'Dining'   },
+  { icon: 'gift',                  label: 'Packages', color: '#6a1b9a', tab: 'Packages' },
 ];
 
-const CategoryRow: FC<{ onPress: () => void }> = ({ onPress }) => (
+const CategoryRow: FC<{ onPress: (tab: string) => void }> = ({ onPress }) => (
   <View style={S.catRow}>
     {CATEGORIES.map(c => (
-      <TouchableOpacity key={c.label} style={S.catItem} onPress={onPress} activeOpacity={0.75}>
+      <TouchableOpacity key={c.label} style={S.catItem} onPress={() => onPress(c.tab)} activeOpacity={0.75}>
         <View style={[S.catIcon, { backgroundColor: c.color + '16' }]}>
           <Icon name={c.icon} size={24} color={c.color} />
         </View>
@@ -70,7 +82,7 @@ const FeaturedCard: FC<{ item: any; type: string; onPress: () => void }> = ({ it
   return (
     <TouchableOpacity style={FC_S.wrap} onPress={onPress} activeOpacity={0.88}>
       <ImageBackground
-        source={{ uri: resolveImg(item.mainImage || item.image, `${type}${item.id}`) }}
+        source={{ uri: resolveImg(item.mainImage || item.image, `${type}${item.id}`, type) }}
         style={FC_S.image}
         imageStyle={{ borderRadius: RADIUS.lg }}
       >
@@ -105,7 +117,7 @@ const FC_S = StyleSheet.create({
 
 const PackageCard: FC<{ item: any; onPress: () => void }> = ({ item, onPress }) => (
   <TouchableOpacity style={PK_S.wrap} onPress={onPress} activeOpacity={0.88}>
-    <Image source={{ uri: resolveImg(item.mainImage || item.image, `pkg${item.id}`) }} style={PK_S.image} />
+    <Image source={{ uri: resolveImg(item.mainImage || item.image, `pkg${item.id}`, 'package') }} style={PK_S.image} />
     {item.discountPercentage ? (
       <View style={PK_S.badge}><Text style={PK_S.badgeText}>{item.discountPercentage}% OFF</Text></View>
     ) : null}
@@ -165,30 +177,61 @@ const BP_S = StyleSheet.create({
   status:  { fontSize: 11, fontFamily: FONTS.bold, fontWeight: '600', textTransform: 'capitalize' },
 });
 
-// ─── Highlight banner ─────────────────────────────────────────────────────────
+// ─── Offer card ───────────────────────────────────────────────────────────────
 
-const HIGHLIGHTS = [
-  { icon: 'bed-queen-outline',       label: 'Luxury Rooms',    sub: 'Comfort & elegance' },
-  { icon: 'waves',                   label: 'Ocean Views',     sub: 'Wake up to paradise' },
-  { icon: 'silverware-fork-knife',   label: 'Fine Dining',     sub: 'Local & international cuisine' },
-  { icon: 'spa',                     label: 'Wellness Spa',    sub: 'Relax & rejuvenate' },
-];
+const TYPE_BADGE: Record<string, { label: string; color: string }> = {
+  room:    { label: 'Room',    color: '#1565c0' },
+  tour:    { label: 'Tour',   color: '#2e7d32' },
+  package: { label: 'Package', color: '#6a1b9a' },
+  spa:     { label: 'Spa',     color: '#ad1457' },
+};
 
-const HighlightCard: FC<{ icon: string; label: string; sub: string }> = ({ icon, label, sub }) => (
-  <View style={HL_S.wrap}>
-    <View style={HL_S.iconWrap}>
-      <Icon name={icon} size={26} color={COLORS.primary} />
-    </View>
-    <Text style={HL_S.label}>{label}</Text>
-    <Text style={HL_S.sub}>{sub}</Text>
-  </View>
-);
+const OfferCard: FC<{ item: any; type: string; onPress: () => void }> = ({ item, type, onPress }) => {
+  const badge   = TYPE_BADGE[type] ?? TYPE_BADGE.room;
+  const price   = type === 'room'
+    ? `₱${Number(item.pricePerNight || item.price || 0).toLocaleString()}/night`
+    : `₱${Number(item.packagePrice || item.price || 0).toLocaleString()}`;
+  const sub     = item.location || item.packageType || item.roomType || item.duration || null;
 
-const HL_S = StyleSheet.create({
-  wrap:     { width: 130, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, padding: 14, marginRight: 10, alignItems: 'center', gap: 6, ...SHADOW.sm },
-  iconWrap: { width: 48, height: 48, borderRadius: RADIUS.full, backgroundColor: COLORS.primaryFaded, justifyContent: 'center', alignItems: 'center' },
-  label:    { fontSize: 13, fontFamily: FONTS.bold, fontWeight: '700', color: COLORS.textDark, textAlign: 'center' },
-  sub:      { fontSize: 10, fontFamily: FONTS.body, color: COLORS.textMuted, textAlign: 'center', lineHeight: 14 },
+  return (
+    <TouchableOpacity style={OC_S.wrap} onPress={onPress} activeOpacity={0.88}>
+      <ImageBackground
+        source={{ uri: resolveImg(item.mainImage || item.image, `${type}${item.id}`, type) }}
+        style={OC_S.image}
+        imageStyle={{ borderRadius: RADIUS.lg }}
+      >
+        <View style={OC_S.overlay}>
+          <View style={[OC_S.typeBadge, { backgroundColor: badge.color }]}>
+            <Text style={OC_S.typeBadgeText}>{badge.label}</Text>
+          </View>
+          {item.discountPercentage ? (
+            <View style={OC_S.discountBadge}>
+              <Text style={OC_S.discountText}>{item.discountPercentage}% OFF</Text>
+            </View>
+          ) : null}
+          <View style={OC_S.bottom}>
+            <Text style={OC_S.name} numberOfLines={1}>{item.name}</Text>
+            {sub ? <Text style={OC_S.sub} numberOfLines={1}>{sub}</Text> : null}
+            <Text style={OC_S.price}>{price}</Text>
+          </View>
+        </View>
+      </ImageBackground>
+    </TouchableOpacity>
+  );
+};
+
+const OC_S = StyleSheet.create({
+  wrap:          { width: width * 0.68, marginRight: 14, borderRadius: RADIUS.lg, overflow: 'hidden', ...SHADOW.md },
+  image:         { width: '100%', height: 195 },
+  overlay:       { flex: 1, backgroundColor: 'rgba(0,0,0,0.28)', padding: 12, justifyContent: 'space-between' },
+  typeBadge:     { alignSelf: 'flex-start', borderRadius: RADIUS.full, paddingHorizontal: 10, paddingVertical: 4 },
+  typeBadgeText: { color: '#fff', fontSize: 10, fontFamily: FONTS.bold, fontWeight: '700' },
+  discountBadge: { alignSelf: 'flex-start', backgroundColor: '#e65100', borderRadius: RADIUS.full, paddingHorizontal: 9, paddingVertical: 3 },
+  discountText:  { color: '#fff', fontSize: 10, fontFamily: FONTS.bold, fontWeight: '700' },
+  bottom:        { gap: 3 },
+  name:          { color: '#fff', fontSize: 15, fontFamily: FONTS.display, fontWeight: '700' },
+  sub:           { color: 'rgba(255,255,255,0.85)', fontSize: 11, fontFamily: FONTS.body },
+  price:         { color: '#fff', fontSize: 14, fontFamily: FONTS.bold, fontWeight: '700', marginTop: 2 },
 });
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
@@ -199,6 +242,30 @@ const HomeScreen: FC = () => {
   const unreadCount     = useSelector((state: RootState) =>
     state.notifications.items.filter(n => !n.read).length);
 
+  const [wallPosts, setWallPosts] = useState<WallApiPost[]>([]);
+  const bellAnim   = useRef(new Animated.Value(0)).current;
+
+  // Swing bell when unread notifications exist
+  useEffect(() => {
+    if (unreadCount === 0) return;
+    const swing = Animated.sequence([
+      Animated.timing(bellAnim, { toValue:  1, duration: 120, useNativeDriver: true }),
+      Animated.timing(bellAnim, { toValue: -1, duration: 120, useNativeDriver: true }),
+      Animated.timing(bellAnim, { toValue:  1, duration: 120, useNativeDriver: true }),
+      Animated.timing(bellAnim, { toValue: -1, duration: 120, useNativeDriver: true }),
+      Animated.timing(bellAnim, { toValue:  0, duration: 120, useNativeDriver: true }),
+    ]);
+    const loop = Animated.loop(swing, { iterations: 1 });
+    loop.start();
+    const interval = setInterval(() => { loop.reset(); loop.start(); }, 4000);
+    return () => { clearInterval(interval); loop.stop(); };
+  }, [unreadCount, bellAnim]);
+
+  const bellRotate = bellAnim.interpolate({
+    inputRange: [-1, 0, 1],
+    outputRange: ['-20deg', '0deg', '20deg'],
+  });
+
   const [tours,        setTours]        = useState<any[]>([]);
   const [rooms,        setRooms]        = useState<any[]>([]);
   const [packages,     setPackages]     = useState<any[]>([]);
@@ -208,11 +275,12 @@ const HomeScreen: FC = () => {
 
   const fetchAll = useCallback(async () => {
     try {
-      const [toursRes, roomsRes, pkgsRes, resRes] = await Promise.all([
+      const [toursRes, roomsRes, pkgsRes, resRes, wallRes] = await Promise.all([
         getTours(token).catch(() => ({})),
         getRooms(token).catch(() => ({})),
         getPackages(token).catch(() => ({})),
         getReservations(token).catch(() => ({})),
+        getWallPosts(6, 0, token).catch(() => ({ posts: [] })),
       ]);
       const pick = (r: any) => r?.['hydra:member'] ?? r?.data ?? [];
       setTours(pick(toursRes).slice(0, 5));
@@ -220,6 +288,7 @@ const HomeScreen: FC = () => {
       setPackages(pick(pkgsRes).slice(0, 5));
       const r = resRes as any;
       setReservations((r?.['hydra:member'] ?? r?.data ?? []).slice(0, 4));
+      setWallPosts(((wallRes as any).posts ?? []).slice(0, 6));
     } catch (e) {
       console.error('[HomeScreen]', e);
     } finally {
@@ -231,7 +300,6 @@ const HomeScreen: FC = () => {
   useEffect(() => { fetchAll(); }, [fetchAll]);
   const onRefresh = () => { setRefreshing(true); fetchAll(); };
 
-  const goExplore  = () => navigation.navigate(ROUTES.EXPLORE);
   const goBookings = () => navigation.navigate(ROUTES.BOOKINGS);
   const goDetail   = (item: any, type: string) =>
     navigation.navigate(ROUTES.SERVICE_DETAIL, { item, type });
@@ -260,7 +328,9 @@ const HomeScreen: FC = () => {
               onPress={() => navigation.navigate(ROUTES.NOTIFICATIONS)}
               activeOpacity={0.8}
             >
-              <Icon name="bell-outline" size={22} color="#fff" />
+              <Animated.View style={{ transform: [{ rotate: bellRotate }] }}>
+                <Icon name="bell-outline" size={22} color="#fff" />
+              </Animated.View>
               {unreadCount > 0 && (
                 <View style={S.bellBadge}>
                   <Text style={S.bellBadgeText}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
@@ -284,15 +354,33 @@ const HomeScreen: FC = () => {
       >
         {/* ── Categories ──────────────────────────────────────────────── */}
         <View style={S.section}>
-          <CategoryRow onPress={goExplore} />
+          <CategoryRow onPress={(tab) => navigation.navigate(ROUTES.EXPLORE, { screen: 'ExploreMain', params: { initialTab: tab } })} />
         </View>
 
-        {/* ── Why Baroro highlights ────────────────────────────────────── */}
+        {/* ── New Offers ───────────────────────────────────────────────── */}
         <View style={S.section}>
-          <SectionHeader title="Why Baroro" />
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={S.hScroll}>
-            {HIGHLIGHTS.map(h => <HighlightCard key={h.label} {...h} />)}
-          </ScrollView>
+          <SectionHeader
+            title="New Offers"
+            onSeeAll={() => navigation.navigate(ROUTES.EXPLORE, { screen: 'ExploreMain', params: { initialTab: 'Packages' } })}
+          />
+          {loading ? (
+            <ActivityIndicator color={COLORS.primary} style={S.loader} />
+          ) : (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={S.hScroll}>
+              {[
+                ...packages.map((i: any) => ({ item: i, type: 'package' })),
+                ...rooms.map((i: any) => ({ item: i, type: 'room' })),
+                ...tours.map((i: any) => ({ item: i, type: 'tour' })),
+              ].slice(0, 6).map(({ item, type }) => (
+                <OfferCard
+                  key={`${type}-${item.id}`}
+                  item={item}
+                  type={type}
+                  onPress={() => goDetail(item, type)}
+                />
+              ))}
+            </ScrollView>
+          )}
         </View>
 
         {/* ── Active bookings ──────────────────────────────────────────── */}
@@ -307,7 +395,7 @@ const HomeScreen: FC = () => {
 
         {/* ── Featured rooms ────────────────────────────────────────────── */}
         <View style={S.section}>
-          <SectionHeader title="Featured Rooms" onSeeAll={goExplore} />
+          <SectionHeader title="Featured Rooms" onSeeAll={() => navigation.navigate(ROUTES.EXPLORE, { screen: 'ExploreMain', params: { initialTab: 'Rooms' } })} />
           {loading
             ? <ActivityIndicator color={COLORS.primary} style={S.loader} />
             : rooms.length === 0
@@ -324,7 +412,7 @@ const HomeScreen: FC = () => {
 
         {/* ── Tours & activities ────────────────────────────────────────── */}
         <View style={S.section}>
-          <SectionHeader title="Tours & Activities" onSeeAll={goExplore} />
+          <SectionHeader title="Tours & Activities" onSeeAll={() => navigation.navigate(ROUTES.EXPLORE, { screen: 'ExploreMain', params: { initialTab: 'Tours' } })} />
           {loading
             ? <ActivityIndicator color={COLORS.primary} style={S.loader} />
             : tours.length === 0
@@ -342,7 +430,7 @@ const HomeScreen: FC = () => {
         {/* ── Packages & promos ─────────────────────────────────────────── */}
         {!loading && packages.length > 0 && (
           <View style={S.section}>
-            <SectionHeader title="Packages & Promos" onSeeAll={goExplore} />
+            <SectionHeader title="Packages & Promos" onSeeAll={() => navigation.navigate(ROUTES.EXPLORE, { screen: 'ExploreMain', params: { initialTab: 'Packages' } })} />
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={S.hScroll}>
               {packages.map(p => (
                 <PackageCard key={p.id} item={p} onPress={() => goDetail(p, 'package')} />
@@ -350,6 +438,59 @@ const HomeScreen: FC = () => {
             </ScrollView>
           </View>
         )}
+
+        {/* ── Community Moments ────────────────────────────────────────────── */}
+        <View style={S.section}>
+          <SectionHeader
+            title="Community Moments"
+            onSeeAll={() => navigation.navigate(ROUTES.SHARE_WALL)}
+          />
+          {loading ? (
+            <ActivityIndicator color={COLORS.primary} style={S.loader} />
+          ) : wallPosts.length === 0 ? (
+            <TouchableOpacity
+              style={CM_S.emptyBanner}
+              onPress={() => navigation.navigate(ROUTES.SHARE_WALL)}
+              activeOpacity={0.85}
+            >
+              <Icon name="image-multiple-outline" size={32} color={COLORS.primary} />
+              <View style={{ flex: 1 }}>
+                <Text style={CM_S.emptyTitle}>Share Wall</Text>
+                <Text style={CM_S.emptySub}>Be the first to share a travel memory with our community!</Text>
+              </View>
+              <Icon name="arrow-right" size={18} color={COLORS.primary} />
+            </TouchableOpacity>
+          ) : (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={S.hScroll}>
+              {wallPosts.map((post: WallApiPost) => (
+                <TouchableOpacity
+                  key={post.id}
+                  style={CM_S.card}
+                  onPress={() => navigation.navigate(ROUTES.SHARE_WALL)}
+                  activeOpacity={0.88}
+                >
+                  {post.imageUri ? (
+                    <Image source={{ uri: post.imageUri }} style={CM_S.image} resizeMode="cover" />
+                  ) : (
+                    <View style={CM_S.imagePlaceholder}>
+                      <Icon name="image-outline" size={32} color={COLORS.border} />
+                    </View>
+                  )}
+                  <View style={CM_S.body}>
+                    <Text style={CM_S.author} numberOfLines={1}>{post.authorName}</Text>
+                    <Text style={CM_S.caption} numberOfLines={2}>{post.caption}</Text>
+                    <View style={CM_S.meta}>
+                      <Icon name="heart" size={12} color="#e53935" />
+                      <Text style={CM_S.metaText}>{post.likedBy.length}</Text>
+                      <Icon name="comment-outline" size={12} color={COLORS.textMuted} style={{ marginLeft: 6 }} />
+                      <Text style={CM_S.metaText}>{post.comments.length}</Text>
+                    </View>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          )}
+        </View>
 
         {/* ── Contact CTA ───────────────────────────────────────────────── */}
         <View style={S.section}>
@@ -426,6 +567,29 @@ const S = StyleSheet.create({
   },
   ctaTitle: { color: '#fff', fontSize: 15, fontFamily: FONTS.bold, fontWeight: '700', marginBottom: 2 },
   ctaSub:   { color: 'rgba(255,255,255,0.7)', fontSize: 12, fontFamily: FONTS.body },
+});
+
+const CM_S = StyleSheet.create({
+  card: {
+    width: 190, backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.lg, marginRight: 12, overflow: 'hidden', ...SHADOW.sm,
+  },
+  image:            { width: '100%', height: 115 },
+  imagePlaceholder: { width: '100%', height: 115, backgroundColor: COLORS.surfaceAlt, justifyContent: 'center', alignItems: 'center' },
+  body:             { padding: 10, gap: 4 },
+  author:           { fontSize: 11, fontFamily: FONTS.bold, fontWeight: '700', color: COLORS.primary },
+  caption:          { fontSize: 12, fontFamily: FONTS.body, color: COLORS.textDark, lineHeight: 17 },
+  meta:             { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 2 },
+  metaText:         { fontSize: 11, fontFamily: FONTS.body, color: COLORS.textMuted },
+
+  emptyBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 14,
+    backgroundColor: COLORS.primaryFaded,
+    borderRadius: RADIUS.lg, padding: 16,
+    borderWidth: 1, borderColor: COLORS.primary + '30',
+  },
+  emptyTitle: { fontSize: 14, fontFamily: FONTS.bold, fontWeight: '700', color: COLORS.textDark, marginBottom: 2 },
+  emptySub:   { fontSize: 12, fontFamily: FONTS.body, color: COLORS.textMuted, lineHeight: 17 },
 });
 
 export default HomeScreen;

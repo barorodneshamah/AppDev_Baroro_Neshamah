@@ -15,6 +15,24 @@ import {
 import ROUTES from '../utils';
 import { COLORS, FONTS, RADIUS, SHADOW, SPACING } from '../theme';
 
+const WsStatusDot: FC = () => {
+  const { connected, reconnecting } = useSelector((s: RootState) => s.wsStatus);
+  const color = connected ? '#4caf50' : reconnecting ? '#f57f17' : '#9e9e9e';
+  const label = connected ? 'Live' : reconnecting ? 'Reconnecting…' : 'Offline';
+  return (
+    <View style={wsDot.wrap}>
+      <View style={[wsDot.dot, { backgroundColor: color }]} />
+      <Text style={[wsDot.label, { color }]}>{label}</Text>
+    </View>
+  );
+};
+
+const wsDot = StyleSheet.create({
+  wrap:  { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.15)' },
+  dot:   { width: 6, height: 6, borderRadius: 3 },
+  label: { fontSize: 10, fontFamily: FONTS.bold, fontWeight: '700' },
+});
+
 const TYPE_META: Record<string, { icon: string; color: string }> = {
   reservation: { icon: 'calendar-check',      color: '#1565c0' },
   payment:     { icon: 'credit-card-outline',  color: '#2e7d32' },
@@ -34,6 +52,27 @@ const timeAgo = (iso: string): string => {
   return `${Math.floor(hrs / 24)}d ago`;
 };
 
+const notificationResourceId = (item: AppNotification, keys: string[]): number | undefined => {
+  for (const key of keys) {
+    const value = item.data?.[key] ?? (item as any)[key];
+    if (typeof value === 'number') return value;
+    if (typeof value === 'string') {
+      const id = value.match(/\/(\d+)$/)?.[1] ?? value;
+      const parsed = Number(id);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    if (value?.id != null) {
+      const parsed = Number(value.id);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    if (typeof value?.['@id'] === 'string') {
+      const id = value['@id'].match(/\/(\d+)$/)?.[1];
+      if (id) return Number(id);
+    }
+  }
+  return undefined;
+};
+
 const NotificationsScreen: FC = () => {
   const navigation = useNavigation<any>();
   const dispatch   = useDispatch();
@@ -47,10 +86,11 @@ const NotificationsScreen: FC = () => {
   const handlePress = (item: AppNotification) => {
     dispatch(markRead(item.id));
     const parent = (navigation as any).getParent();
+    const messageId = notificationResourceId(item, ['messageId', 'contactMessageId', 'itemId', 'id']);
     if (isAdmin) {
       if (item.type === 'message') {
-        item.data?.messageId
-          ? parent?.navigate('MessagesTab', { screen: ROUTES.ADMIN_MESSAGE_DETAIL, params: { id: item.data.messageId } })
+        messageId
+          ? parent?.navigate('MessagesTab', { screen: ROUTES.ADMIN_MESSAGE_DETAIL, params: { id: messageId } })
           : parent?.navigate('MessagesTab');
       } else if (item.type === 'reservation') {
         parent?.navigate('ReservationsTab');
@@ -59,8 +99,8 @@ const NotificationsScreen: FC = () => {
       }
     } else if (isStaff) {
       if (item.type === 'message') {
-        item.data?.messageId
-          ? parent?.navigate('StaffMsgTab', { screen: ROUTES.STAFF_MESSAGE_DETAIL, params: { id: item.data.messageId } })
+        messageId
+          ? parent?.navigate('StaffMsgTab', { screen: ROUTES.STAFF_MESSAGE_DETAIL, params: { id: messageId } })
           : parent?.navigate('StaffMsgTab');
       } else if (item.type === 'reservation') {
         parent?.navigate('StaffResTab');
@@ -69,8 +109,10 @@ const NotificationsScreen: FC = () => {
       }
     } else {
       if (item.type === 'message') {
-        parent?.navigate(ROUTES.MESSAGES);
-      } else if (['reservation', 'booking', 'cancellation'].includes(item.type)) {
+        messageId
+          ? parent?.navigate(ROUTES.MESSAGES, { openMessageId: messageId })
+          : parent?.navigate(ROUTES.MESSAGES);
+      } else if (['reservation', 'booking', 'cancellation', 'payment'].includes(item.type)) {
         parent?.navigate(ROUTES.BOOKINGS);
       }
     }
@@ -121,6 +163,7 @@ const NotificationsScreen: FC = () => {
             </View>
           )}
         </View>
+        <WsStatusDot />
         <View style={styles.headerActions}>
 {unread > 0 && (
             <TouchableOpacity onPress={() => dispatch(markAllRead())} style={styles.headerBtn}>

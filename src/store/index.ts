@@ -3,11 +3,13 @@ import { configureStore }        from '@reduxjs/toolkit';
 import createSagaMiddleware, { SagaMiddleware } from 'redux-saga';
 import auth                      from '../app/reducers/auth';
 import notifications             from '../app/reducers/notifications';
+import wall                      from '../app/reducers/wall';
+import wsStatus                  from '../app/reducers/wsStatus';
 
 const sagaMiddleware = createSagaMiddleware();
 
 export const store = configureStore({
-  reducer: { auth, notifications },
+  reducer: { auth, notifications, wall, wsStatus },
   middleware: (getDefault) =>
     getDefault({ thunk: false, serializableCheck: false }).concat(sagaMiddleware),
 });

@@ -9,6 +9,7 @@ import AdminNav from './AdminNav';
 import StaffNav from './StaffNav';
 import { connect as wsConnect, disconnect as wsDisconnect } from '../services/websocketService';
 import { startPolling, stopPolling } from '../services/notificationPoller';
+import { listenForNotifications, setupPushNotifications } from '../services/notificationService';
 
 const Navigation: FC = () => {
   const isDarkMode = useColorScheme() === 'dark';
@@ -25,9 +26,13 @@ const Navigation: FC = () => {
     StatusBar.setBarStyle('dark-content', true);
   }, [isDarkMode]);
 
-  // Connect WebSocket + start reply poller when authenticated
+  // All logged-in accounts connect to WebSocket for the real-time
+  // notification requirement. Polling stays active as a fallback.
   useEffect(() => {
+    let unsubscribePush: (() => void) | undefined;
     if (isLoggedIn && token) {
+      setupPushNotifications(token).catch(e => console.warn('[Notifications] setup failed', e));
+      unsubscribePush = listenForNotifications();
       wsConnect(token);
       startPolling();
     } else {
@@ -35,10 +40,11 @@ const Navigation: FC = () => {
       stopPolling();
     }
     return () => {
+      unsubscribePush?.();
       wsDisconnect();
       stopPolling();
     };
-  }, [isLoggedIn, token]);
+  }, [isLoggedIn, token, isAdmin, isStaff]);
 
   return (
     <NavigationContainer>

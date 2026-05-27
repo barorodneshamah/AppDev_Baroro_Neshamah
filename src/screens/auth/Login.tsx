@@ -24,6 +24,7 @@ import Svg, { Path } from 'react-native-svg';
 import ROUTES from '../../utils';
 import { userLogin, userGoogleLoginSuccess } from '../../app/reducers/auth';
 import { signInWithGoogle, authenticateWithBackend, logEvent } from '../../config/firebase';
+import { ValidationModal } from '../../components/AppModals';
 
 const { height } = Dimensions.get('window');
 

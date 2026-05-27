@@ -4,8 +4,10 @@ import { View, StyleSheet, Platform } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator }     from '@react-navigation/stack';
 import { RouteProp }                from '@react-navigation/native';
+import { useSelector } from 'react-redux';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import ROUTES from '../utils';
+import { RootState } from '../store';
 import { COLORS, FONTS, RADIUS, SHADOW } from '../theme';
 import { getAdminReservations, getAdminPayments } from '../app/api/api';
 
@@ -13,7 +15,9 @@ import { getAdminReservations, getAdminPayments } from '../app/api/api';
 import AdminDashboardScreen    from '../screens/admin/AdminDashboardScreen';
 import AdminUsersScreen        from '../screens/admin/AdminUsersScreen';
 import AdminUserFormScreen     from '../screens/admin/AdminUserFormScreen';
+import AdminUserDetailScreen   from '../screens/admin/AdminUserDetailScreen';
 import AdminActivityLogsScreen from '../screens/admin/AdminActivityLogsScreen';
+import AdminActivityLogDetailScreen from '../screens/admin/AdminActivityLogDetailScreen';
 
 import ServicesScreen          from '../screens/shared/ServicesScreen';
 import ServiceDetailScreen     from '../screens/shared/ServiceDetailScreen';
@@ -29,7 +33,8 @@ import MessagesScreen          from '../screens/shared/MessagesScreen';
 import MessageDetailScreen     from '../screens/shared/MessageDetailScreen';
 
 import ManageProfileScreen     from '../screens/shared/ManageProfileScreen';
-import NotificationsScreen    from '../screens/NotificationsScreen';
+import NotificationsScreen     from '../screens/NotificationsScreen';
+import ShareWallScreen         from '../screens/ShareWallScreen';
 
 const ACCENT = COLORS.primary;
 
@@ -47,11 +52,10 @@ const UsersStack = createStackNavigator();
 const UsersStackNav: FC = () => (
   <UsersStack.Navigator screenOptions={{ headerShown: false }}>
     <UsersStack.Screen name={ROUTES.ADMIN_USERS}         component={AdminUsersScreen} />
+    <UsersStack.Screen name={ROUTES.ADMIN_USER_DETAIL}   component={AdminUserDetailScreen} />
     <UsersStack.Screen name={ROUTES.ADMIN_USER_FORM}     component={AdminUserFormScreen} />
     <UsersStack.Screen name={ROUTES.ADMIN_ACTIVITY_LOGS} component={AdminActivityLogsScreen} />
-    <UsersStack.Screen name={ROUTES.ADMIN_ACTIVITY_LOG_DETAIL}>
-      {() => null}
-    </UsersStack.Screen>
+    <UsersStack.Screen name={ROUTES.ADMIN_ACTIVITY_LOG_DETAIL} component={AdminActivityLogDetailScreen} />
   </UsersStack.Navigator>
 );
 
@@ -75,6 +79,10 @@ const ServicesStackNav: FC = () => (
     <ServicesStack.Screen name={ROUTES.PACKAGE_DETAIL}
       children={() => <ServiceDetailScreen canEdit accentColor={ACCENT} />} />
     <ServicesStack.Screen name={ROUTES.PACKAGE_FORM}
+      children={() => <ServiceFormScreen accentColor={ACCENT} />} />
+    <ServicesStack.Screen name={ROUTES.SPA_DETAIL}
+      children={() => <ServiceDetailScreen canEdit accentColor={ACCENT} />} />
+    <ServicesStack.Screen name={ROUTES.SPA_FORM}
       children={() => <ServiceFormScreen accentColor={ACCENT} />} />
   </ServicesStack.Navigator>
 );
@@ -127,6 +135,7 @@ const TAB_ICONS: Record<string, string> = {
   ServicesTab:     'format-list-bulleted',
   ReservationsTab: 'calendar-check',
   PaymentsTab:     'credit-card-outline',
+  WallTab:         'image-multiple-outline',
   MessagesTab:     'email-outline',
   ProfileTab:      'account-circle',
 };
@@ -134,30 +143,42 @@ const TAB_ICONS: Record<string, string> = {
 type TabParamList = { [key: string]: undefined };
 const Tab = createBottomTabNavigator<TabParamList>();
 
-const AdminNavigation: FC = () => (
-  <Tab.Navigator
-    screenOptions={({ route }: { route: RouteProp<TabParamList> }) => ({
-      headerShown: false,
-      tabBarStyle: styles.tabBar,
-      tabBarActiveTintColor:   ACCENT,
-      tabBarInactiveTintColor: COLORS.textMuted,
-      tabBarLabelStyle: styles.tabLabel,
-      tabBarIcon: ({ focused, color }: { focused: boolean; color: string }) => (
-        <View style={[styles.iconWrapper, focused && styles.iconActive]}>
-          <Icon name={TAB_ICONS[route.name] ?? 'circle'} size={16} color={color} />
-        </View>
-      ),
-    })}
-  >
-    <Tab.Screen name="DashTab"         component={DashStackNav}         options={{ title: 'Dashboard' }} />
-    <Tab.Screen name="UsersTab"        component={UsersStackNav}        options={{ title: 'Users' }} />
-    <Tab.Screen name="ServicesTab"     component={ServicesStackNav}     options={{ title: 'Services' }} />
-    <Tab.Screen name="ReservationsTab" component={ReservationsStackNav} options={{ title: 'Reservation' }} />
-    <Tab.Screen name="PaymentsTab"     component={PaymentsStackNav}     options={{ title: 'Payments' }} />
-    <Tab.Screen name="MessagesTab"     component={MessagesStackNav}     options={{ title: 'Messages' }} />
-    <Tab.Screen name="ProfileTab"      component={ProfileStackNav}      options={{ title: 'Profile' }} />
-  </Tab.Navigator>
-);
+const badgeValue = (count: number) => count > 99 ? '99+' : count || undefined;
+
+const AdminNavigation: FC = () => {
+  const notifications = useSelector((state: RootState) => state.notifications.items);
+  const unreadCount = notifications.filter(n => !n.read).length;
+  const unreadMessages = notifications.filter(n => !n.read && n.type === 'message').length;
+  const unreadReservations = notifications.filter(n => !n.read && n.type === 'reservation').length;
+  const unreadPayments = notifications.filter(n => !n.read && n.type === 'payment').length;
+
+  return (
+    <Tab.Navigator
+      screenOptions={({ route }: { route: RouteProp<TabParamList> }) => ({
+        headerShown: false,
+        tabBarStyle: styles.tabBar,
+        tabBarActiveTintColor:   ACCENT,
+        tabBarInactiveTintColor: COLORS.textMuted,
+        tabBarLabelStyle: styles.tabLabel,
+        tabBarBadgeStyle: styles.tabBadge,
+        tabBarIcon: ({ focused, color }: { focused: boolean; color: string }) => (
+          <View style={[styles.iconWrapper, focused && styles.iconActive]}>
+            <Icon name={TAB_ICONS[route.name] ?? 'circle'} size={17} color={color} />
+          </View>
+        ),
+      })}
+    >
+      <Tab.Screen name="DashTab"         component={DashStackNav}         options={{ title: 'Dashboard', tabBarBadge: badgeValue(unreadCount) }} />
+      <Tab.Screen name="UsersTab"        component={UsersStackNav}        options={{ title: 'Users' }} />
+      <Tab.Screen name="ServicesTab"     component={ServicesStackNav}     options={{ title: 'Services' }} />
+      <Tab.Screen name="ReservationsTab" component={ReservationsStackNav} options={{ title: 'Reservation', tabBarBadge: badgeValue(unreadReservations) }} />
+      <Tab.Screen name="PaymentsTab"     component={PaymentsStackNav}     options={{ title: 'Payments', tabBarBadge: badgeValue(unreadPayments) }} />
+      <Tab.Screen name="WallTab"         component={ShareWallScreen}      options={{ title: 'Wall' }} />
+      <Tab.Screen name="MessagesTab"     component={MessagesStackNav}     options={{ title: 'Messages', tabBarBadge: badgeValue(unreadMessages) }} />
+      <Tab.Screen name="ProfileTab"      component={ProfileStackNav}      options={{ title: 'Profile' }} />
+    </Tab.Navigator>
+  );
+};
 
 // ─── Styles ────────────────────────────────────────────────────────────────────
 
@@ -173,9 +194,19 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     ...SHADOW.md,
   },
-  tabLabel:   { fontSize: 8, fontFamily: FONTS.bold, fontWeight: '600', marginTop: 2 },
-  iconWrapper:{ width: 30, height: 30, justifyContent: 'center', alignItems: 'center', borderRadius: RADIUS.md },
+  tabLabel:   { fontSize: 9, fontFamily: FONTS.bold, fontWeight: '600', marginTop: 2 },
+  iconWrapper:{ width: 32, height: 32, justifyContent: 'center', alignItems: 'center', borderRadius: RADIUS.md },
   iconActive: { backgroundColor: COLORS.primaryFaded },
+  tabBadge: {
+    backgroundColor: COLORS.error,
+    color: '#fff',
+    fontFamily: FONTS.bold,
+    fontSize: 9,
+    fontWeight: '800',
+    minWidth: 16,
+    height: 16,
+    lineHeight: 14,
+  },
 });
 
 export default AdminNavigation;

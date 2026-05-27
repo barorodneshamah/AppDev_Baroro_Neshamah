@@ -1,6 +1,7 @@
 import { Platform } from "react-native";
+import API_BASE_URL from '../../config/api.config';
 
-const BASE_URL = 'http://192.168.254.138:8000/api';
+const BASE_URL = `${API_BASE_URL}/api`;
 
 interface LoginCredentials {
   username: string;
